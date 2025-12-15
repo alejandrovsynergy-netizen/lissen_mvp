@@ -6,8 +6,9 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 import 'waiting_for_speaker_screen.dart';
 import 'create_offer_dialog.dart';
-import 'session_screen.dart';
+import '../features/sessions/ui/session_screen.dart';
 import 'incoming_companion_dialog.dart';
+import '../features/offers/data/offers_service.dart';
 
 class OffersPage extends StatefulWidget {
   const OffersPage({super.key});
@@ -605,17 +606,13 @@ class _OffersPageState extends State<OffersPage> {
         return;
       }
 
-      await FirebaseFirestore.instance
-          .collection('offers')
-          .doc(offerId)
-          .update({
-            'status': 'pending_speaker',
-            'pendingSpeakerId': speakerId,
-            'pendingCompanionId': currentUserId,
-            'pendingCompanionAlias': currentUserAlias,
-            'pendingSince': FieldValue.serverTimestamp(),
-            'updatedAt': FieldValue.serverTimestamp(),
-          });
+      await OffersService().companionTakeOffer(
+        offerId: offerId,
+        speakerId: speakerId,
+        currentUserId: currentUserId,
+        currentUserAlias: currentUserAlias, 
+      );
+
 
       if (!mounted) return;
 
@@ -711,85 +708,11 @@ class _OffersPageState extends State<OffersPage> {
     final uid = currentUser.uid;
 
     try {
-      final result = await FirebaseFirestore.instance
-          .runTransaction<Map<String, dynamic>>((tx) async {
-            final offerRef = FirebaseFirestore.instance
-                .collection('offers')
-                .doc(offerId);
-            final offerSnap = await tx.get(offerRef);
+      final result = await OffersService().acceptPendingCompanion(
+        offerId: offerId,
+        speakerUid: uid,
+      );
 
-            if (!offerSnap.exists) {
-              return {'result': 'not_exists'};
-            }
-
-            final data = offerSnap.data() as Map<String, dynamic>;
-            final status = (data['status'] ?? 'active') as String;
-            final speakerId = (data['speakerId'] ?? '') as String;
-            final pendingCompanionId =
-                (data['pendingCompanionId'] ?? '') as String?;
-            final lastSessionId = (data['lastSessionId'] ?? '') as String?;
-
-            // Si ya hay sesión usada, devolvemos eso
-            if (status == 'used' &&
-                lastSessionId != null &&
-                lastSessionId.isNotEmpty) {
-              return {'result': 'already_used', 'sessionId': lastSessionId};
-            }
-
-            // Caso ideal: todavía está pendiente para este hablante
-            if (status == 'pending_speaker' &&
-                speakerId == uid &&
-                pendingCompanionId != null &&
-                pendingCompanionId.isNotEmpty) {
-              final sessionsRef = FirebaseFirestore.instance.collection(
-                'sessions',
-              );
-              final newSessionRef = sessionsRef.doc();
-
-              final speakerAlias = (data['speakerAlias'] ?? 'Hablante')
-                  .toString();
-              final companionAlias =
-                  (data['pendingCompanionAlias'] ?? 'Compañera').toString();
-              final durationMinutes =
-                  (data['durationMinutes'] ?? data['minMinutes'] ?? 30) as int;
-              final int rawPriceCents =
-                  (data['priceCents'] ?? data['totalMinAmountCents'] ?? 0)
-                      as int;
-              final communicationType = (data['communicationType'] ?? 'chat')
-                  .toString();
-              final currency = (data['currency'] ?? 'usd').toString();
-
-              tx.set(newSessionRef, {
-                'speakerId': speakerId,
-                'companionId': pendingCompanionId,
-                'speakerAlias': speakerAlias,
-                'companionAlias': companionAlias,
-                'offerId': offerId,
-                'status': 'active',
-                'createdAt': FieldValue.serverTimestamp(),
-                'updatedAt': FieldValue.serverTimestamp(),
-                'durationMinutes': durationMinutes,
-                'communicationType': communicationType,
-                'currency': currency,
-                'priceCents': rawPriceCents,
-              });
-
-              tx.update(offerRef, {
-                'status': 'used',
-                'lastSessionId': newSessionRef.id,
-                'pendingSpeakerId': FieldValue.delete(),
-                'pendingCompanionId': FieldValue.delete(),
-                'pendingCompanionAlias': FieldValue.delete(),
-                'pendingSince': FieldValue.delete(),
-                'updatedAt': FieldValue.serverTimestamp(),
-              });
-
-              return {'result': 'ok', 'sessionId': newSessionRef.id};
-            }
-
-            // No está ya pendiente
-            return {'result': 'not_pending'};
-          });
 
       if (!mounted) return;
 
@@ -838,50 +761,11 @@ class _OffersPageState extends State<OffersPage> {
     final uid = currentUser.uid;
 
     try {
-      final result = await FirebaseFirestore.instance.runTransaction<String>((
-        tx,
-      ) async {
-        final offerRef = FirebaseFirestore.instance
-            .collection('offers')
-            .doc(offerId);
-        final offerSnap = await tx.get(offerRef);
+      final result = await OffersService().rejectPendingCompanion(
+        offerId: offerId,
+        speakerUid: uid,
+      );
 
-        if (!offerSnap.exists) {
-          return 'not_exists';
-        }
-
-        final data = offerSnap.data() as Map<String, dynamic>;
-        final status = (data['status'] ?? 'active') as String;
-        final speakerId = (data['speakerId'] ?? '') as String;
-        final pendingCompanionId =
-            (data['pendingCompanionId'] ?? '') as String?;
-        final lastSessionId = (data['lastSessionId'] ?? '') as String?;
-
-        if (status == 'used' &&
-            lastSessionId != null &&
-            lastSessionId.isNotEmpty) {
-          return 'already_used';
-        }
-
-        if (status == 'pending_speaker' &&
-            speakerId == uid &&
-            pendingCompanionId != null &&
-            pendingCompanionId.isNotEmpty &&
-            (lastSessionId == null || lastSessionId.isEmpty)) {
-          tx.update(offerRef, {
-            'status': 'active',
-            'pendingSpeakerId': FieldValue.delete(),
-            'pendingCompanionId': FieldValue.delete(),
-            'pendingCompanionAlias': FieldValue.delete(),
-            'pendingSince': FieldValue.delete(),
-            'rejectedBySpeakerId': uid,
-            'updatedAt': FieldValue.serverTimestamp(),
-          });
-          return 'ok';
-        }
-
-        return 'not_pending';
-      });
 
       if (!mounted) return;
 

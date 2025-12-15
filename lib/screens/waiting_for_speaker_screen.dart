@@ -4,7 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
-import 'session_screen.dart';
+import '../features/sessions/ui/session_screen.dart';
 
 class WaitingForSpeakerScreen extends StatefulWidget {
   final String offerId;

@@ -3,7 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../widgets/companion_schedule_and_rates_block.dart';
 
-import 'session_screen.dart';
+import '../features/sessions/ui/session_screen.dart';
 
 class HomeTab extends StatefulWidget {
   const HomeTab({super.key});

@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'public_profile_screen.dart';
+import '../features/explorer/ui/public_profile_screen.dart';
 
 /// Muestra el modal de decisión cuando una compañera quiere tomar la oferta.
 /// Devuelve:

@@ -7,7 +7,7 @@ import 'firebase_options.dart';
 import 'screens/auth_screen.dart';
 import 'screens/onboarding_screen.dart';
 import 'screens/lissen_home.dart';
-import 'screens/session_screen.dart'; // ⬅️ para SessionConversationScreen
+import 'features/sessions/ui/session_screen.dart'; // ⬅️ para SessionConversationScreen
 import 'screens/global_session_rating_listener.dart'; // ⬅️ listener global
 
 Future<void> main() async {
@@ -98,8 +98,13 @@ class _RootController extends StatelessWidget {
         }
 
         if (snap.hasError) {
-          return const Scaffold(
-            body: Center(child: Text('Error cargando usuario')),
+          return Scaffold(
+            body: Center(
+              child: Text(
+                'Error cargando usuario:\n${snap.error}',
+                textAlign: TextAlign.center,
+              ),
+            ),
           );
         }
 
@@ -139,8 +144,13 @@ class _RootController extends StatelessWidget {
             }
 
             if (sesSnap.hasError) {
-              return const Scaffold(
-                body: Center(child: Text('Error cargando sesiones')),
+              return Scaffold(
+                body: Center(
+                  child: Text(
+                    'Error cargando sesiones:\n${sesSnap.error}',
+                    textAlign: TextAlign.center,
+                  ),
+                ),
               );
             }
 

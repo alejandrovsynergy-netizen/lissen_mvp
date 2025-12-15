@@ -12,9 +12,9 @@ import 'home_tab.dart';
 import 'offers_page.dart';
 import 'profile_page.dart';
 import 'incoming_companion_dialog.dart';
-import 'session_screen.dart';
+import '../features/sessions/ui/session_screen.dart';
 import 'waiting_for_speaker_screen.dart';
-import 'explore_profiles_screen.dart';
+import '../features/explorer/ui/explore_profiles_screen.dart';
 
 class LissenHome extends StatefulWidget {
   const LissenHome({super.key});

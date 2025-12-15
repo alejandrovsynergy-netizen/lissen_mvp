@@ -1,0 +1,54 @@
+{
+  "project_info": {
+    "project_number": "512203471020",
+    "project_id": "lissen-mvp",
+    "storage_bucket": "lissen-mvp.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:512203471020:android:b365fc48323f8eb87b0709",
+        "android_client_info": {
+          "package_name": "com.example.lissen_mvp"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "512203471020-cl9hmpkgh6eq3rte3aq4sib4qj489kvm.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.lissen_mvp",
+            "certificate_hash": "3d02be2b3711b3899f4605e4f3352dfa89f2f4f4"
+          }
+        },
+        {
+          "client_id": "512203471020-386i0ol8pcado46ocvlthmpahmaa762p.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB2gsH07J1rKqoG42YBjttobcoUMU4M9Us"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "512203471020-386i0ol8pcado46ocvlthmpahmaa762p.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "512203471020-apecb5br3jggrh07j8l3ljphn3buckr6.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.lissenApp"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

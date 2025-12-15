@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">lissen_mvp</string>
+
+    <!-- 🔵 Facebook -->
+    <string name="facebook_app_id">25289027844084582</string>
+    <string name="facebook_client_token">2ce8b19e5e2ab9df67ae2f5afd33c133</string>
+    <string name="fb_login_protocol_scheme">fb25289027844084582</string>
+</resources>

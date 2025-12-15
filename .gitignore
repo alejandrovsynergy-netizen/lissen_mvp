@@ -1,0 +1,18 @@
+# Flutter
+.dart_tool/
+build/
+.pub/
+.packages
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Backups
+*.bak
+arbol.txt
+PROYECTO_COMPLETO.txt

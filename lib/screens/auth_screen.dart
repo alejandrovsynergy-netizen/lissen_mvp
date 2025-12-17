@@ -22,6 +22,9 @@ class _AuthScreenState extends State<AuthScreen> {
 
   String? errorText;
 
+  // ✅ Mejor: instancia única
+  final GoogleSignIn _googleSignIn = GoogleSignIn();
+
   // ====== WRAPPERS PARA LOS BOTONES (void, no async) ======
   void _handleGoogleBtn() {
     if (loading) return;
@@ -41,9 +44,33 @@ class _AuthScreenState extends State<AuthScreen> {
   }
 
   // ============================================================
+  // ✅ Validación simple (evita errores tontos y requests inútiles)
+  // ============================================================
+  bool _validateEmailPass({required bool forRegister}) {
+    final email = emailC.text.trim();
+    final pass = passC.text.trim();
+
+    if (email.isEmpty || !email.contains('@')) {
+      setState(() => errorText = 'Escribe un email válido.');
+      return false;
+    }
+    if (pass.isEmpty) {
+      setState(() => errorText = 'Escribe tu contraseña.');
+      return false;
+    }
+    if (forRegister && pass.length < 6) {
+      setState(() => errorText = 'La contraseña debe tener al menos 6 caracteres.');
+      return false;
+    }
+    return true;
+  }
+
+  // ============================================================
   // 🔵 LOGIN CON EMAIL
   // ============================================================
   Future<void> _login() async {
+    if (!_validateEmailPass(forRegister: false)) return;
+
     setState(() {
       loading = true;
       errorText = null;
@@ -57,6 +84,8 @@ class _AuthScreenState extends State<AuthScreen> {
       // 🚫 No navegamos aquí, el AuthGate de main.dart se encarga
     } on FirebaseAuthException catch (e) {
       setState(() => errorText = _firebaseErrorMsg(e));
+    } catch (_) {
+      setState(() => errorText = 'Ocurrió un error inesperado al iniciar sesión.');
     } finally {
       if (mounted) setState(() => loading = false);
     }
@@ -66,6 +95,8 @@ class _AuthScreenState extends State<AuthScreen> {
   // 🔵 REGISTRO CON EMAIL
   // ============================================================
   Future<void> _register() async {
+    if (!_validateEmailPass(forRegister: true)) return;
+
     setState(() {
       loading = true;
       errorText = null;
@@ -86,6 +117,8 @@ class _AuthScreenState extends State<AuthScreen> {
       // AuthGate decide si manda a onboarding o home
     } on FirebaseAuthException catch (e) {
       setState(() => errorText = _firebaseErrorMsg(e));
+    } catch (_) {
+      setState(() => errorText = 'Ocurrió un error inesperado al crear tu cuenta.');
     } finally {
       if (mounted) setState(() => loading = false);
     }
@@ -101,7 +134,7 @@ class _AuthScreenState extends State<AuthScreen> {
     });
 
     try {
-      final GoogleSignInAccount? googleUser = await GoogleSignIn().signIn();
+      final GoogleSignInAccount? googleUser = await _googleSignIn.signIn();
 
       if (googleUser == null) {
         // Usuario canceló
@@ -131,13 +164,13 @@ class _AuthScreenState extends State<AuthScreen> {
           'uid': uid,
           'onboardingCompleted': false,
           'createdAt': FieldValue.serverTimestamp(),
-        });
+        }, SetOptions(merge: true));
       }
 
       // AuthGate ya se encargará de mandar a Onboarding o Home
     } on FirebaseAuthException catch (e) {
       setState(() => errorText = _firebaseErrorMsg(e));
-    } catch (e) {
+    } catch (_) {
       setState(() => errorText = 'Error al iniciar con Google.');
     } finally {
       if (mounted) setState(() => loading = false);
@@ -154,19 +187,27 @@ class _AuthScreenState extends State<AuthScreen> {
     });
 
     try {
+      // Si ves sesiones "pegadas", prueba descomentar esto:
+      // await FacebookAuth.instance.logOut();
+
       final LoginResult result = await FacebookAuth.instance.login();
 
-      if (result.status != LoginStatus.success) {
+      if (result.status == LoginStatus.cancelled) {
         if (mounted) setState(() => loading = false);
+        return;
+      }
+
+      if (result.status != LoginStatus.success) {
+        if (mounted) {
+          setState(() => errorText = 'No se pudo iniciar con Facebook.');
+        }
         return;
       }
 
       final accessToken = result.accessToken;
       if (accessToken == null) {
         if (mounted) {
-          setState(
-            () => errorText = 'No se pudo obtener el token de Facebook.',
-          );
+          setState(() => errorText = 'No se pudo obtener el token de Facebook.');
         }
         return;
       }
@@ -186,12 +227,12 @@ class _AuthScreenState extends State<AuthScreen> {
           'uid': uid,
           'onboardingCompleted': false,
           'createdAt': FieldValue.serverTimestamp(),
-        });
+        }, SetOptions(merge: true));
       }
     } on FirebaseAuthException catch (e) {
       setState(() => errorText = _firebaseErrorMsg(e));
     } catch (e) {
-      setState(() => errorText = 'Facebook error: $e');
+      setState(() => errorText = 'Error al iniciar con Facebook.');
     } finally {
       if (mounted) setState(() => loading = false);
     }
@@ -212,8 +253,14 @@ class _AuthScreenState extends State<AuthScreen> {
         return 'Ese email ya está registrado.';
       case 'weak-password':
         return 'La contraseña es muy débil.';
+      case 'account-exists-with-different-credential':
+        return 'Ese correo ya existe con otro método de inicio.';
+      case 'user-disabled':
+        return 'Esta cuenta está deshabilitada.';
+      case 'too-many-requests':
+        return 'Demasiados intentos. Intenta más tarde.';
       default:
-        return 'Error: ${e.message}';
+        return 'Error: ${e.message ?? 'No se pudo autenticar.'}';
     }
   }
 
@@ -295,6 +342,7 @@ class _AuthScreenState extends State<AuthScreen> {
                 TextField(
                   controller: emailC,
                   keyboardType: TextInputType.emailAddress,
+                  enabled: !loading,
                   decoration: const InputDecoration(
                     labelText: 'Email',
                     border: OutlineInputBorder(),
@@ -304,6 +352,7 @@ class _AuthScreenState extends State<AuthScreen> {
                 TextField(
                   controller: passC,
                   obscureText: true,
+                  enabled: !loading,
                   decoration: const InputDecoration(
                     labelText: 'Contraseña',
                     border: OutlineInputBorder(),
@@ -383,39 +432,43 @@ class _AuthScreenState extends State<AuthScreen> {
       children: [
         // Facebook (azul, texto blanco, pill)
         GestureDetector(
-          onTap: _handleFacebookBtn,
-          child: Container(
-            height: 48,
-            decoration: BoxDecoration(
-              color: const Color(0xFF1877F2),
-              borderRadius: BorderRadius.circular(24),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Container(
-                  width: 28,
-                  height: 28,
-                  decoration: const BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: Colors.white,
+          behavior: HitTestBehavior.opaque,
+          onTap: loading ? null : _handleFacebookBtn,
+          child: Opacity(
+            opacity: loading ? 0.6 : 1,
+            child: Container(
+              height: 48,
+              decoration: BoxDecoration(
+                color: const Color(0xFF1877F2),
+                borderRadius: BorderRadius.circular(24),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Container(
+                    width: 28,
+                    height: 28,
+                    decoration: const BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: Colors.white,
+                    ),
+                    child: const Icon(
+                      Icons.facebook,
+                      size: 18,
+                      color: Color(0xFF1877F2),
+                    ),
                   ),
-                  child: const Icon(
-                    Icons.facebook,
-                    size: 18,
-                    color: Color(0xFF1877F2),
+                  const SizedBox(width: 12),
+                  const Text(
+                    'Continuar con Facebook',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
-                ),
-                const SizedBox(width: 12),
-                const Text(
-                  'Continuar con Facebook',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
@@ -424,28 +477,32 @@ class _AuthScreenState extends State<AuthScreen> {
 
         // Google (gris claro, texto negro, pill, G multicolor sin PNG)
         GestureDetector(
-          onTap: _handleGoogleBtn,
-          child: Container(
-            height: 48,
-            decoration: BoxDecoration(
-              color: const Color(0xFFF5F5F5),
-              borderRadius: BorderRadius.circular(24),
-              border: Border.all(color: Colors.grey.shade300),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: const [
-                _GoogleLogoG(),
-                SizedBox(width: 12),
-                Text(
-                  'Continuar con Google',
-                  style: TextStyle(
-                    color: Colors.black87,
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
+          behavior: HitTestBehavior.opaque,
+          onTap: loading ? null : _handleGoogleBtn,
+          child: Opacity(
+            opacity: loading ? 0.6 : 1,
+            child: Container(
+              height: 48,
+              decoration: BoxDecoration(
+                color: const Color(0xFFF5F5F5),
+                borderRadius: BorderRadius.circular(24),
+                border: Border.all(color: Colors.grey),
+              ),
+              child: const Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  _GoogleLogoG(),
+                  SizedBox(width: 12),
+                  Text(
+                    'Continuar con Google',
+                    style: TextStyle(
+                      color: Colors.black87,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
@@ -472,7 +529,6 @@ class _GoogleLogoG extends StatelessWidget {
       alignment: Alignment.center,
       child: ShaderMask(
         shaderCallback: (Rect bounds) {
-          // Gradiente circular aproximando los colores de Google
           return const SweepGradient(
             colors: [
               Color(0xFF4285F4), // azul

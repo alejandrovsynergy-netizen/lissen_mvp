@@ -143,8 +143,6 @@ class _PublicProfileBodyState extends State<PublicProfileBody> {
   }
 
   Future<void> _loadGalleryFromSubcollection() async {
-    // Tomamos primero el userId pasado explícitamente,
-    // y si no hay, intentamos con widget.data['uid'].
     final String? uid = widget.userId ?? (widget.data['uid'] as String?);
 
     if (uid == null) {
@@ -312,13 +310,11 @@ class _PublicProfileBodyState extends State<PublicProfileBody> {
         'createdAt': FieldValue.serverTimestamp(),
       });
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Reporte enviado.')),
-      );
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Reporte enviado.')));
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error al reportar: $e')),
-      );
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Error al reportar: $e')));
     }
   }
 
@@ -374,13 +370,11 @@ class _PublicProfileBodyState extends State<PublicProfileBody> {
         'blockedUsers': FieldValue.arrayUnion([blockedUid]),
       }, SetOptions(merge: true));
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Usuario bloqueado.')),
-      );
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Usuario bloqueado.')));
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error al bloquear: $e')),
-      );
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Error al bloquear: $e')));
     }
   }
 
@@ -391,7 +385,9 @@ class _PublicProfileBodyState extends State<PublicProfileBody> {
     final alias = (widget.data['alias'] ?? '') as String? ?? '';
     final age = widget.data['age'];
     final city = (widget.data['city'] ?? '') as String? ?? '';
+    final state = (widget.data['state'] ?? '') as String? ?? ''; // opcional
     final country = (widget.data['country'] ?? '') as String? ?? '';
+    final countryFlag = (widget.data['countryFlag'] ?? '') as String? ?? ''; // opcional
     final genderRaw = widget.data['gender'];
     final gender = _formatGender(genderRaw);
 
@@ -406,7 +402,7 @@ class _PublicProfileBodyState extends State<PublicProfileBody> {
     final voice15 = _formatRate(voiceCents, kMinVoice15Cents);
     final video15 = _formatRate(videoCents, kMinVideo15Cents);
 
-    // Estado simple: isOnline (si no existe => false)
+    // ✅ Estado simple por presencia (si no existe -> false)
     final bool isOnline = widget.data['isOnline'] == true;
 
     final String? photoUrl =
@@ -414,7 +410,6 @@ class _PublicProfileBodyState extends State<PublicProfileBody> {
             ? widget.data['photoUrl'] as String
             : null;
 
-    // 1) Preferimos los datos de la subcolección si ya se cargaron
     List<String> galleryPhotos = _galleryPhotosFromSubcollection ??
         (widget.data['galleryPhotos'] as List<dynamic>?)?.cast<String>() ??
         (widget.data['gallery'] as List<dynamic>?)?.cast<String>() ??
@@ -438,7 +433,7 @@ class _PublicProfileBodyState extends State<PublicProfileBody> {
     final PageController currentController =
         _showingPhotos ? _photosPageController : _videosPageController;
 
-    // Contenedor neutral (sin colores por género / sin opacidades custom)
+    // ✅ Contenedor neutral para no interferir con theme futuro
     return Card(
       elevation: 0,
       clipBehavior: Clip.antiAlias,
@@ -457,7 +452,6 @@ class _PublicProfileBodyState extends State<PublicProfileBody> {
                 ),
               ),
 
-            // (Opcional) Mensaje muy pequeño si hubo error cargando galería
             if (_galleryError != null) ...[
               Text(
                 'No se pudo cargar galería: $_galleryError',
@@ -476,9 +470,7 @@ class _PublicProfileBodyState extends State<PublicProfileBody> {
                   GestureDetector(
                     onTap: () {
                       if (!_showingPhotos) {
-                        setState(() {
-                          _showingPhotos = true;
-                        });
+                        setState(() => _showingPhotos = true);
                       }
                     },
                     child: Text(
@@ -496,9 +488,7 @@ class _PublicProfileBodyState extends State<PublicProfileBody> {
                   GestureDetector(
                     onTap: () {
                       if (_showingPhotos) {
-                        setState(() {
-                          _showingPhotos = false;
-                        });
+                        setState(() => _showingPhotos = false);
                       }
                     },
                     child: Text(
@@ -671,19 +661,22 @@ class _PublicProfileBodyState extends State<PublicProfileBody> {
               style: theme.textTheme.bodyMedium,
             ),
 
-            if (city.isNotEmpty || country.isNotEmpty) ...[
+            if (city.isNotEmpty || state.isNotEmpty || country.isNotEmpty) ...[
               const SizedBox(height: 2),
               Text(
-                '$city${city.isNotEmpty && country.isNotEmpty ? ', ' : ''}$country',
+                _formatLocationLine(
+                  city: city,
+                  state: state,
+                  country: country,
+                  flag: countryFlag,
+                ),
                 style: theme.textTheme.bodyMedium,
               ),
             ],
 
-            const SizedBox(height: 8),
-
-            // ====== Calificación: OCULTA (no se muestra) ======
-
             const SizedBox(height: 16),
+
+            // ✅ Calificación OCULTA (se quitó el bloque completo)
 
             if (bio.isNotEmpty) ...[
               Text(
@@ -804,6 +797,30 @@ class _PublicProfileBodyState extends State<PublicProfileBody> {
       ),
     );
   }
+
+  String _formatLocationLine({
+    required String city,
+    required String state,
+    required String country,
+    required String flag,
+  }) {
+    final parts = <String>[];
+    if (city.trim().isNotEmpty) parts.add(city.trim());
+    if (state.trim().isNotEmpty) parts.add(state.trim());
+
+    final left = parts.join(', ');
+    final rightCountry = country.trim();
+    final rightFlag = flag.trim();
+
+    final right = [
+      if (rightCountry.isNotEmpty) rightCountry,
+      if (rightFlag.isNotEmpty) rightFlag,
+    ].join(' ');
+
+    if (left.isEmpty) return right;
+    if (right.isEmpty) return left;
+    return '$left · $right';
+  }
 }
 
 /// Visor fullscreen para fotos/videos.
@@ -872,7 +889,6 @@ class _FullScreenMediaViewerState extends State<_FullScreenMediaViewer> {
               ),
             );
           } else {
-            // AQUÍ YA SE IMPLEMENTA EL VIDEO
             return _FullScreenVideoPage(url: url);
           }
         },
@@ -907,13 +923,9 @@ class _FullScreenVideoPageState extends State<_FullScreenVideoPage> {
         ..setLooping(true)
         ..initialize().then((_) {
           if (!mounted) return;
-          setState(() {
-            _initialized = true;
-          });
+          setState(() => _initialized = true);
           _controller!.play();
-          setState(() {
-            _isPlaying = true;
-          });
+          setState(() => _isPlaying = true);
         }).catchError((error) {
           if (!mounted) return;
           setState(() {
@@ -1003,7 +1015,6 @@ class _FullScreenVideoPageState extends State<_FullScreenVideoPage> {
               child: VideoPlayer(_controller!),
             ),
           ),
-          // Icono de play/pausa sobre el video
           AnimatedOpacity(
             opacity: _isPlaying ? 0.0 : 1.0,
             duration: const Duration(milliseconds: 200),
@@ -1020,7 +1031,6 @@ class _FullScreenVideoPageState extends State<_FullScreenVideoPage> {
               ),
             ),
           ),
-          // Barra de posición simple abajo
           Positioned(
             left: 16,
             right: 16,

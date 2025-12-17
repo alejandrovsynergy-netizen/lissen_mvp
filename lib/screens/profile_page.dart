@@ -6,6 +6,9 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:google_sign_in/google_sign_in.dart';
+import 'package:flutter_facebook_auth/flutter_facebook_auth.dart';
+
 
 import '../widgets/companion_rates_block.dart';
 import 'edit_profile_screen.dart';
@@ -166,6 +169,31 @@ class _ProfilePageState extends State<ProfilePage> {
         return 'No especificado';
     }
   }
+  // ============================================================
+// Cerrar sesión “hard” (Firebase + providers)
+// ============================================================
+Future<void> _signOutHard() async {
+  try {
+    // 1) Cierra Google (si aplica)
+    try { await GoogleSignIn().signOut(); } catch (_) {}
+    try { await GoogleSignIn().disconnect(); } catch (_) {}
+
+    // 2) Cierra Facebook (si aplica)
+    try { await FacebookAuth.instance.logOut(); } catch (_) {}
+
+    // 3) Cierra Firebase
+    await FirebaseAuth.instance.signOut();
+
+    // Nota: NO navegamos manualmente.
+    // Tu app ya tiene un AuthGate que detecta el signOut y te manda al login.
+  } catch (e) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Error al cerrar sesión: $e')),
+    );
+  }
+}
+
 
   @override
   Widget build(BuildContext context) {
@@ -449,8 +477,9 @@ class _ProfilePageState extends State<ProfilePage> {
                       ),
                     ),
                     onPressed: () async {
-                      await FirebaseAuth.instance.signOut();
+                      await _signOutHard();
                     },
+
                     icon: const Icon(Icons.logout, size: 18),
                     label: const Text(
                       'Cerrar sesión',

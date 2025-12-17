@@ -21,3 +21,9 @@ git rm --cached .flutter-plugins-dependencies
 git rm --cached flutter
 git rm --cached flutter_01.log
 git rm --cached flutter_01.png
+
+.flutter-plugins-dependencies
+flutter
+flutter_*.log
+flutter_*.png
+

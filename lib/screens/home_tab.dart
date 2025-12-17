@@ -765,7 +765,7 @@ class _PersonTile extends StatelessWidget {
             return confirmDialog(
               title: '¿Quitar de esta lista?',
               message:
-                  'Esta persona dejará de aparecer en “Personas”, pero tus sesiones seguirán visibles en el historial.',
+                  'Esta persona dejará de aparecer en “explorar”, pero tus sesiones seguirán visibles en el historial.',
               confirmText: 'Quitar',
             );
           },

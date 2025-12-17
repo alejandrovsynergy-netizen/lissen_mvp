@@ -27,12 +27,12 @@ class _LissenHomeState extends State<LissenHome> {
   int _index = 0;
 
   // ============================
-  // PESTAÑAS PRINCIPALES (ARREGLADO)
+  // PESTAÑAS PRINCIPALES
   // ============================
   final List<Widget> _pages = [
     HomeTab(), // 0: Inicio
     const OffersPage(), // 1: Ofertas
-    const ExploreProfilesScreen(), // 2: Explorar (NUEVO)
+    const ExploreProfilesScreen(), // 2: Explorar
     const ProfilePage(), // 3: Perfil
   ];
 
@@ -224,12 +224,11 @@ class _LissenHomeState extends State<LissenHome> {
     final offerId = pendingDoc.id;
     final offerData = pendingDoc.data();
 
-    final companionAlias = (offerData['pendingCompanionAlias'] ?? 'Compañera')
-        .toString();
+    final companionAlias =
+        (offerData['pendingCompanionAlias'] ?? 'Compañera').toString();
 
-    final companionUid = (offerData['pendingCompanionId'] ?? '')
-        .toString()
-        .trim();
+    final companionUid =
+        (offerData['pendingCompanionId'] ?? '').toString().trim();
 
     int durationMinutes =
         offerData['durationMinutes'] ?? offerData['minMinutes'] ?? 0;
@@ -249,8 +248,8 @@ class _LissenHomeState extends State<LissenHome> {
 
     final double amountUsd = rawTotalMinCents / 100.0;
     final String currency = (offerData['currency'] ?? 'usd').toString();
-    final String communicationType = (offerData['communicationType'] ?? 'chat')
-        .toString();
+    final String communicationType =
+        (offerData['communicationType'] ?? 'chat').toString();
 
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) {
@@ -296,12 +295,10 @@ class _LissenHomeState extends State<LissenHome> {
       if (currentUser == null) return;
       final uid = currentUser.uid;
 
-      final result = await FirebaseFirestore.instance.runTransaction<String>((
-        tx,
-      ) async {
-        final offerRef = FirebaseFirestore.instance
-            .collection('offers')
-            .doc(offerId);
+      final result =
+          await FirebaseFirestore.instance.runTransaction<String>((tx) async {
+        final offerRef =
+            FirebaseFirestore.instance.collection('offers').doc(offerId);
         final offerSnap = await tx.get(offerRef);
 
         if (!offerSnap.exists) {
@@ -311,8 +308,7 @@ class _LissenHomeState extends State<LissenHome> {
         final data = offerSnap.data() as Map<String, dynamic>;
         final status = (data['status'] ?? 'active') as String;
         final speakerId = (data['speakerId'] ?? '') as String;
-        final pendingCompanionId =
-            (data['pendingCompanionId'] ?? '') as String?;
+        final pendingCompanionId = (data['pendingCompanionId'] ?? '') as String?;
         final lastSessionId = (data['lastSessionId'] ?? '') as String?;
 
         if (status == 'used' &&
@@ -379,81 +375,75 @@ class _LissenHomeState extends State<LissenHome> {
 
       final result = await FirebaseFirestore.instance
           .runTransaction<Map<String, dynamic>>((tx) async {
-            final offerRef = FirebaseFirestore.instance
-                .collection('offers')
-                .doc(offerId);
-            final offerSnap = await tx.get(offerRef);
+        final offerRef =
+            FirebaseFirestore.instance.collection('offers').doc(offerId);
+        final offerSnap = await tx.get(offerRef);
 
-            if (!offerSnap.exists) {
-              return {'result': 'not_exists'};
-            }
+        if (!offerSnap.exists) {
+          return {'result': 'not_exists'};
+        }
 
-            final data = offerSnap.data() as Map<String, dynamic>;
-            final status = (data['status'] ?? 'active') as String;
-            final speakerId = (data['speakerId'] ?? '') as String;
-            final pendingCompanionId =
-                (data['pendingCompanionId'] ?? '') as String?;
-            final lastSessionId = (data['lastSessionId'] ?? '') as String?;
+        final data = offerSnap.data() as Map<String, dynamic>;
+        final status = (data['status'] ?? 'active') as String;
+        final speakerId = (data['speakerId'] ?? '') as String;
+        final pendingCompanionId = (data['pendingCompanionId'] ?? '') as String?;
+        final lastSessionId = (data['lastSessionId'] ?? '') as String?;
 
-            if (status == 'used' &&
-                lastSessionId != null &&
-                lastSessionId.isNotEmpty) {
-              return {'result': 'already_used', 'sessionId': lastSessionId};
-            }
+        if (status == 'used' &&
+            lastSessionId != null &&
+            lastSessionId.isNotEmpty) {
+          return {'result': 'already_used', 'sessionId': lastSessionId};
+        }
 
-            if (status == 'pending_speaker' &&
-                speakerId == uid &&
-                pendingCompanionId != null &&
-                pendingCompanionId.isNotEmpty &&
-                (lastSessionId == null || lastSessionId.isEmpty)) {
-              final sessionsRef = FirebaseFirestore.instance.collection(
-                'sessions',
-              );
-              final newSessionRef = sessionsRef.doc();
+        if (status == 'pending_speaker' &&
+            speakerId == uid &&
+            pendingCompanionId != null &&
+            pendingCompanionId.isNotEmpty &&
+            (lastSessionId == null || lastSessionId.isEmpty)) {
+          final sessionsRef = FirebaseFirestore.instance.collection('sessions');
+          final newSessionRef = sessionsRef.doc();
 
-              final speakerAlias = (data['speakerAlias'] ?? 'Hablante')
-                  .toString();
-              final companionAlias =
-                  (data['pendingCompanionAlias'] ?? 'Compañera').toString();
-              final durationMinutes =
-                  (data['durationMinutes'] ?? data['minMinutes'] ?? 30) as int;
-              final int rawPriceCents =
-                  (data['priceCents'] ?? data['totalMinAmountCents'] ?? 0)
-                      as int;
-              final communicationType = (data['communicationType'] ?? 'chat')
-                  .toString();
-              final currency = (data['currency'] ?? 'usd').toString();
+          final speakerAlias = (data['speakerAlias'] ?? 'Hablante').toString();
+          final companionAlias =
+              (data['pendingCompanionAlias'] ?? 'Compañera').toString();
+          final durationMinutes =
+              (data['durationMinutes'] ?? data['minMinutes'] ?? 30) as int;
+          final int rawPriceCents =
+              (data['priceCents'] ?? data['totalMinAmountCents'] ?? 0) as int;
+          final communicationType =
+              (data['communicationType'] ?? 'chat').toString();
+          final currency = (data['currency'] ?? 'usd').toString();
 
-              tx.set(newSessionRef, {
-                'speakerId': speakerId,
-                'companionId': pendingCompanionId,
-                'speakerAlias': speakerAlias,
-                'companionAlias': companionAlias,
-                'offerId': offerId,
-                'status': 'active',
-                'createdAt': FieldValue.serverTimestamp(),
-                'updatedAt': FieldValue.serverTimestamp(),
-                'durationMinutes': durationMinutes,
-                'communicationType': communicationType,
-                'currency': currency,
-                'priceCents': rawPriceCents,
-              });
-
-              tx.update(offerRef, {
-                'status': 'used',
-                'lastSessionId': newSessionRef.id,
-                'pendingSpeakerId': FieldValue.delete(),
-                'pendingCompanionId': FieldValue.delete(),
-                'pendingCompanionAlias': FieldValue.delete(),
-                'pendingSince': FieldValue.delete(),
-                'updatedAt': FieldValue.serverTimestamp(),
-              });
-
-              return {'result': 'ok', 'sessionId': newSessionRef.id};
-            }
-
-            return {'result': 'not_pending'};
+          tx.set(newSessionRef, {
+            'speakerId': speakerId,
+            'companionId': pendingCompanionId,
+            'speakerAlias': speakerAlias,
+            'companionAlias': companionAlias,
+            'offerId': offerId,
+            'status': 'active',
+            'createdAt': FieldValue.serverTimestamp(),
+            'updatedAt': FieldValue.serverTimestamp(),
+            'durationMinutes': durationMinutes,
+            'communicationType': communicationType,
+            'currency': currency,
+            'priceCents': rawPriceCents,
           });
+
+          tx.update(offerRef, {
+            'status': 'used',
+            'lastSessionId': newSessionRef.id,
+            'pendingSpeakerId': FieldValue.delete(),
+            'pendingCompanionId': FieldValue.delete(),
+            'pendingCompanionAlias': FieldValue.delete(),
+            'pendingSince': FieldValue.delete(),
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+
+          return {'result': 'ok', 'sessionId': newSessionRef.id};
+        }
+
+        return {'result': 'not_pending'};
+      });
 
       if (!mounted) return;
 
@@ -566,28 +556,103 @@ class _LissenHomeState extends State<LissenHome> {
 
   @override
   Widget build(BuildContext context) {
+    final bottomPad = MediaQuery.of(context).padding.bottom;
+
     return Scaffold(
-      body: _pages[_index],
-      bottomNavigationBar: BottomNavigationBar(
-        type: BottomNavigationBarType.fixed,
-        backgroundColor: Theme.of(context).colorScheme.surfaceVariant,
-        currentIndex: _index,
-        selectedItemColor: Theme.of(context).colorScheme.primary,
-        unselectedItemColor: Colors.grey, // 🔹 Siempre visibles
-        showUnselectedLabels: true,
-        onTap: (i) {
-          setState(() => _index = i);
-        },
-        items: const [
-          BottomNavigationBarItem(icon: Icon(Icons.home), label: "Inicio"),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.local_offer),
-            label: "Ofertas",
+      body: Stack(
+        children: [
+          // Mantiene vivas las pantallas (no se reinician al cambiar)
+          IndexedStack(
+            index: _index,
+            children: _pages,
           ),
-          BottomNavigationBarItem(icon: Icon(Icons.explore), label: "Explorar"),
-          BottomNavigationBarItem(icon: Icon(Icons.person), label: "Perfil"),
+
+          // 4 botones flotantes
+          Positioned(
+            left: 12,
+            right: 12,
+            bottom: 10 + bottomPad,
+            child: _FloatingQuadNav(
+              index: _index,
+              onTap: (i) => setState(() => _index = i),
+            ),
+          ),
         ],
       ),
     );
   }
 }
+
+class _FloatingQuadNav extends StatelessWidget {
+  final int index;
+  final void Function(int) onTap;
+
+  const _FloatingQuadNav({
+    required this.index,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    Widget btn({
+      required int i,
+      required IconData icon,
+      required String label,
+    }) {
+      final selected = i == index;
+
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Material(
+            elevation: selected ? 10 : 6,
+            shape: const CircleBorder(),
+            color: selected
+                ? theme.colorScheme.primary.withOpacity(0.95)
+                : Colors.black.withOpacity(0.55),
+            child: InkWell(
+              customBorder: const CircleBorder(),
+              onTap: () => onTap(i),
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Icon(
+                  icon,
+                  size: 24,
+                  color: selected ? Colors.black : Colors.white,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+              color: selected ? theme.colorScheme.primary : Colors.white70,
+            ),
+          ),
+        ],
+      );
+    }
+
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            btn(i: 0, icon: Icons.home_outlined, label: 'Inicio'),
+            btn(i: 1, icon: Icons.local_offer_outlined, label: 'Ofertas'),
+            btn(i: 2, icon: Icons.explore_outlined, label: 'Explorar'),
+            btn(i: 3, icon: Icons.person_outline, label: 'Perfil'),
+          ],
+        ),
+      ),
+    );
+  }
+}
+

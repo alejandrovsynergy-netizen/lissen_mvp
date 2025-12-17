@@ -12,7 +12,7 @@ const int kMinVideo15Cents = 15500; // $155
 class PublicProfileScreen extends StatelessWidget {
   final String companionUid;
   final void Function(String companionUid, Map<String, dynamic> profileData)?
-  onMakeOffer;
+      onMakeOffer;
   final bool enableMakeOfferButton;
 
   const PublicProfileScreen({
@@ -208,20 +208,6 @@ class _PublicProfileBodyState extends State<PublicProfileBody> {
     }
   }
 
-  String _onlineStatus() {
-    final online = widget.data['onlineStatus'];
-    switch (online) {
-      case 'online':
-        return 'En línea';
-      case 'busy':
-        return 'Ocupado';
-      case 'offline':
-        return 'Desconectado';
-      default:
-        return 'Estado desconocido';
-    }
-  }
-
   (String daysText, String hoursText) _availabilityParts() {
     final days = (widget.data['availabilityDays'] as List<dynamic>?) ?? [];
     if (days.isEmpty) return ('Sin horario definido', '');
@@ -326,13 +312,13 @@ class _PublicProfileBodyState extends State<PublicProfileBody> {
         'createdAt': FieldValue.serverTimestamp(),
       });
 
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Reporte enviado.')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Reporte enviado.')),
+      );
     } catch (e) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Error al reportar: $e')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error al reportar: $e')),
+      );
     }
   }
 
@@ -385,16 +371,16 @@ class _PublicProfileBodyState extends State<PublicProfileBody> {
           .collection('users')
           .doc(currentUser.uid)
           .set({
-            'blockedUsers': FieldValue.arrayUnion([blockedUid]),
-          }, SetOptions(merge: true));
+        'blockedUsers': FieldValue.arrayUnion([blockedUid]),
+      }, SetOptions(merge: true));
 
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Usuario bloqueado.')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Usuario bloqueado.')),
+      );
     } catch (e) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Error al bloquear: $e')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error al bloquear: $e')),
+      );
     }
   }
 
@@ -409,10 +395,6 @@ class _PublicProfileBodyState extends State<PublicProfileBody> {
     final genderRaw = widget.data['gender'];
     final gender = _formatGender(genderRaw);
 
-    final ratingRaw = widget.data['rating'];
-    final rating = ratingRaw is num ? ratingRaw.toDouble() : 0.0;
-
-    final onlineInfo = _onlineStatus();
     final bio = (widget.data['bio'] ?? '') as String? ?? '';
     final companionCode = (widget.data['companionCode'] ?? '') as String? ?? '';
 
@@ -424,14 +406,16 @@ class _PublicProfileBodyState extends State<PublicProfileBody> {
     final voice15 = _formatRate(voiceCents, kMinVoice15Cents);
     final video15 = _formatRate(videoCents, kMinVideo15Cents);
 
+    // Estado simple: isOnline (si no existe => false)
+    final bool isOnline = widget.data['isOnline'] == true;
+
     final String? photoUrl =
         (widget.data['photoUrl'] as String?)?.isNotEmpty == true
-        ? widget.data['photoUrl'] as String
-        : null;
+            ? widget.data['photoUrl'] as String
+            : null;
 
     // 1) Preferimos los datos de la subcolección si ya se cargaron
-    List<String> galleryPhotos =
-        _galleryPhotosFromSubcollection ??
+    List<String> galleryPhotos = _galleryPhotosFromSubcollection ??
         (widget.data['galleryPhotos'] as List<dynamic>?)?.cast<String>() ??
         (widget.data['gallery'] as List<dynamic>?)?.cast<String>() ??
         [];
@@ -440,435 +424,383 @@ class _PublicProfileBodyState extends State<PublicProfileBody> {
       galleryPhotos = [photoUrl];
     }
 
-    final List<String> galleryVideos =
-        _galleryVideosFromSubcollection ??
+    final List<String> galleryVideos = _galleryVideosFromSubcollection ??
         (widget.data['galleryVideos'] as List<dynamic>?)?.cast<String>() ??
         [];
 
     final (availabilityDays, availabilityHours) = _availabilityParts();
 
-    // Color de la tarjeta según GÉNERO
-    final String genderLower = (genderRaw ?? '').toString().toLowerCase();
-    final Color baseColor;
-    if (genderLower == 'female') {
-      baseColor = Colors.pinkAccent;
-    } else if (genderLower == 'male') {
-      baseColor = Colors.blueAccent;
-    } else {
-      baseColor = Colors.deepPurpleAccent;
-    }
-
-    final bgColor = baseColor.withOpacity(0.12);
-    final borderColor = baseColor.withOpacity(0.6);
-
     final bool hasPhotos = galleryPhotos.isNotEmpty;
     final bool hasVideos = galleryVideos.isNotEmpty;
 
-    final List<String> currentItems = _showingPhotos
-        ? galleryPhotos
-        : galleryVideos;
-    final PageController currentController = _showingPhotos
-        ? _photosPageController
-        : _videosPageController;
+    final List<String> currentItems =
+        _showingPhotos ? galleryPhotos : galleryVideos;
+    final PageController currentController =
+        _showingPhotos ? _photosPageController : _videosPageController;
 
-    return Container(
-      decoration: BoxDecoration(
-        color: bgColor,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: borderColor, width: 1.2),
-      ),
-      padding: const EdgeInsets.all(12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (widget.showCloseButton && widget.onClose != null)
-            Align(
-              alignment: Alignment.centerLeft,
-              child: IconButton(
-                icon: const Icon(Icons.close),
-                onPressed: widget.onClose,
+    // Contenedor neutral (sin colores por género / sin opacidades custom)
+    return Card(
+      elevation: 0,
+      clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (widget.showCloseButton && widget.onClose != null)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: IconButton(
+                  icon: const Icon(Icons.close),
+                  onPressed: widget.onClose,
+                ),
               ),
-            ),
 
-          // (Opcional) Mensaje muy pequeño si hubo error cargando galería
-          if (_galleryError != null) ...[
-            Text(
-              'No se pudo cargar galería: $_galleryError',
-              style: const TextStyle(fontSize: 11, color: Colors.redAccent),
-            ),
-            const SizedBox(height: 4),
-          ],
-
-          // ====== GALERÍA + selector FOTOS/VIDEOS ======
-          if (hasPhotos || hasVideos) ...[
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                GestureDetector(
-                  onTap: () {
-                    if (!_showingPhotos) {
-                      setState(() {
-                        _showingPhotos = true;
-                      });
-                    }
-                  },
-                  child: Text(
-                    'FOTOS',
-                    style: TextStyle(
-                      fontWeight: _showingPhotos
-                          ? FontWeight.bold
-                          : FontWeight.normal,
-                      decoration: _showingPhotos
-                          ? TextDecoration.underline
-                          : TextDecoration.none,
-                      color: _showingPhotos
-                          ? baseColor
-                          : theme.textTheme.bodyMedium?.color,
-                    ),
-                  ),
+            // (Opcional) Mensaje muy pequeño si hubo error cargando galería
+            if (_galleryError != null) ...[
+              Text(
+                'No se pudo cargar galería: $_galleryError',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.error,
                 ),
-                const SizedBox(width: 16),
-                GestureDetector(
-                  onTap: () {
-                    if (_showingPhotos) {
-                      setState(() {
-                        _showingPhotos = false;
-                      });
-                    }
-                  },
-                  child: Text(
-                    'VIDEOS',
-                    style: TextStyle(
-                      fontWeight: !_showingPhotos
-                          ? FontWeight.bold
-                          : FontWeight.normal,
-                      decoration: !_showingPhotos
-                          ? TextDecoration.underline
-                          : TextDecoration.none,
-                      color: !_showingPhotos
-                          ? baseColor
-                          : theme.textTheme.bodyMedium?.color,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
+              ),
+              const SizedBox(height: 4),
+            ],
 
-            SizedBox(
-              height: 260,
-              child: currentItems.isEmpty
-                  ? Center(
-                      child: Text(
-                        _showingPhotos ? 'Sin fotos' : 'Sin videos',
-                        style: const TextStyle(fontSize: 14),
+            // ====== GALERÍA + selector FOTOS/VIDEOS ======
+            if (hasPhotos || hasVideos) ...[
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  GestureDetector(
+                    onTap: () {
+                      if (!_showingPhotos) {
+                        setState(() {
+                          _showingPhotos = true;
+                        });
+                      }
+                    },
+                    child: Text(
+                      'FOTOS',
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        fontWeight:
+                            _showingPhotos ? FontWeight.bold : FontWeight.normal,
+                        decoration: _showingPhotos
+                            ? TextDecoration.underline
+                            : TextDecoration.none,
                       ),
-                    )
-                  : Stack(
-                      children: [
-                        PageView.builder(
-                          controller: currentController,
-                          itemCount: currentItems.length,
-                          itemBuilder: (context, index) {
-                            final url = currentItems[index];
-                            final isVideo = !_showingPhotos;
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  GestureDetector(
+                    onTap: () {
+                      if (_showingPhotos) {
+                        setState(() {
+                          _showingPhotos = false;
+                        });
+                      }
+                    },
+                    child: Text(
+                      'VIDEOS',
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        fontWeight:
+                            !_showingPhotos ? FontWeight.bold : FontWeight.normal,
+                        decoration: !_showingPhotos
+                            ? TextDecoration.underline
+                            : TextDecoration.none,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
 
-                            return GestureDetector(
-                              onTap: () {
-                                _openFullScreenMedia(
-                                  items: currentItems,
-                                  initialIndex: index,
-                                  isVideo: isVideo,
-                                );
-                              },
-                              child: ClipRRect(
-                                borderRadius: BorderRadius.circular(12),
-                                child: _showingPhotos
-                                    ? Image.network(
-                                        url,
-                                        // Imagen completa, sin recorte
-                                        fit: BoxFit.contain,
-                                        errorBuilder:
-                                            (context, error, stackTrace) =>
-                                                Container(
-                                                  color: Colors.black12,
-                                                  alignment: Alignment.center,
-                                                  child: const Icon(
-                                                    Icons.broken_image,
-                                                  ),
-                                                ),
-                                      )
-                                    : Container(
-                                        color: Colors.black,
-                                        alignment: Alignment.center,
-                                        child: const Icon(
-                                          Icons.play_circle_outline,
-                                          size: 64,
-                                          color: Colors.white70,
-                                        ),
-                                      ),
-                              ),
-                            );
-                          },
+              SizedBox(
+                height: 260,
+                child: currentItems.isEmpty
+                    ? Center(
+                        child: Text(
+                          _showingPhotos ? 'Sin fotos' : 'Sin videos',
+                          style: theme.textTheme.bodyMedium,
                         ),
-                        if (currentItems.isNotEmpty)
-                          Positioned(
-                            left: 4,
-                            top: 0,
-                            bottom: 0,
-                            child: IconButton(
-                              icon: const Icon(Icons.chevron_left, size: 28),
-                              color: Colors.white70,
-                              onPressed: () {
-                                final page =
-                                    currentController.page?.round() ?? 0;
-                                final prevPage = page == 0
-                                    ? currentItems.length - 1
-                                    : page - 1;
-                                currentController.animateToPage(
-                                  prevPage,
-                                  duration: const Duration(milliseconds: 250),
-                                  curve: Curves.easeInOut,
-                                );
-                              },
-                            ),
+                      )
+                    : Stack(
+                        children: [
+                          PageView.builder(
+                            controller: currentController,
+                            itemCount: currentItems.length,
+                            itemBuilder: (context, index) {
+                              final url = currentItems[index];
+                              final isVideo = !_showingPhotos;
+
+                              return GestureDetector(
+                                onTap: () {
+                                  _openFullScreenMedia(
+                                    items: currentItems,
+                                    initialIndex: index,
+                                    isVideo: isVideo,
+                                  );
+                                },
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(12),
+                                  child: _showingPhotos
+                                      ? Image.network(
+                                          url,
+                                          fit: BoxFit.contain,
+                                          errorBuilder:
+                                              (context, error, stackTrace) =>
+                                                  Container(
+                                            color: theme.colorScheme.surfaceVariant,
+                                            alignment: Alignment.center,
+                                            child: const Icon(Icons.broken_image),
+                                          ),
+                                        )
+                                      : Container(
+                                          color: theme.colorScheme.surfaceVariant,
+                                          alignment: Alignment.center,
+                                          child: const Icon(
+                                            Icons.play_circle_outline,
+                                            size: 64,
+                                          ),
+                                        ),
+                                ),
+                              );
+                            },
                           ),
-                        if (currentItems.isNotEmpty)
-                          Positioned(
-                            right: 4,
-                            top: 0,
-                            bottom: 0,
-                            child: IconButton(
-                              icon: const Icon(Icons.chevron_right, size: 28),
-                              color: Colors.white70,
-                              onPressed: () {
-                                final page =
-                                    currentController.page?.round() ?? 0;
-                                final nextPage = page == currentItems.length - 1
-                                    ? 0
-                                    : page + 1;
-                                currentController.animateToPage(
-                                  nextPage,
-                                  duration: const Duration(milliseconds: 250),
-                                  curve: Curves.easeInOut,
-                                );
-                              },
+                          if (currentItems.isNotEmpty)
+                            Positioned(
+                              left: 4,
+                              top: 0,
+                              bottom: 0,
+                              child: IconButton(
+                                icon: const Icon(Icons.chevron_left, size: 28),
+                                onPressed: () {
+                                  final page = currentController.page?.round() ?? 0;
+                                  final prevPage = page == 0
+                                      ? currentItems.length - 1
+                                      : page - 1;
+                                  currentController.animateToPage(
+                                    prevPage,
+                                    duration: const Duration(milliseconds: 250),
+                                    curve: Curves.easeInOut,
+                                  );
+                                },
+                              ),
                             ),
-                          ),
-                        Positioned(
-                          bottom: 6,
-                          left: 0,
-                          right: 0,
-                          child: Center(
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 4,
+                          if (currentItems.isNotEmpty)
+                            Positioned(
+                              right: 4,
+                              top: 0,
+                              bottom: 0,
+                              child: IconButton(
+                                icon: const Icon(Icons.chevron_right, size: 28),
+                                onPressed: () {
+                                  final page = currentController.page?.round() ?? 0;
+                                  final nextPage = page == currentItems.length - 1
+                                      ? 0
+                                      : page + 1;
+                                  currentController.animateToPage(
+                                    nextPage,
+                                    duration: const Duration(milliseconds: 250),
+                                    curve: Curves.easeInOut,
+                                  );
+                                },
                               ),
-                              decoration: BoxDecoration(
-                                color: Colors.black54,
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: const Text(
-                                'Toca para ver en grande · desliza para más',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 11,
+                            ),
+                          Positioned(
+                            bottom: 6,
+                            left: 0,
+                            right: 0,
+                            child: Center(
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 4,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.black54,
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: const Text(
+                                  'Toca para ver en grande · desliza para más',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 11,
+                                  ),
                                 ),
                               ),
                             ),
                           ),
-                        ),
-                      ],
-                    ),
-            ),
-
-            const SizedBox(height: 16),
-          ] else ...[
-            const SizedBox(height: 8),
-          ],
-
-          // ====== HEADER: alias + estado online ======
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              Expanded(
-                child: Text(
-                  alias.isNotEmpty ? alias : 'Usuario',
-                  style: const TextStyle(
-                    fontSize: 22,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
+                        ],
+                      ),
               ),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    Icons.circle,
-                    size: 10,
-                    color: onlineInfo == 'En línea'
-                        ? Colors.greenAccent
-                        : onlineInfo == 'Ocupado'
-                        ? Colors.orangeAccent
-                        : Colors.grey,
-                  ),
-                  const SizedBox(width: 6),
-                  Text(onlineInfo, style: const TextStyle(fontSize: 13)),
-                ],
-              ),
+
+              const SizedBox(height: 16),
+            ] else ...[
+              const SizedBox(height: 8),
             ],
-          ),
 
-          const SizedBox(height: 4),
-
-          Text(
-            '${age ?? '--'} años · $gender',
-            style: theme.textTheme.bodyMedium,
-          ),
-
-          if (city.isNotEmpty || country.isNotEmpty) ...[
-            const SizedBox(height: 2),
-            Text(
-              '$city${city.isNotEmpty && country.isNotEmpty ? ', ' : ''}$country',
-              style: theme.textTheme.bodyMedium,
-            ),
-          ],
-
-          const SizedBox(height: 8),
-
-          Row(
-            children: [
-              const Text('Calificación', style: TextStyle(fontSize: 13)),
-              const SizedBox(width: 8),
-              Container(
-                width: 32,
-                height: 32,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  border: Border.all(color: baseColor, width: 2),
-                ),
-                alignment: Alignment.center,
-                child: Text(
-                  rating.toStringAsFixed(1),
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-            ],
-          ),
-
-          const SizedBox(height: 16),
-
-          if (bio.isNotEmpty) ...[
-            const Text(
-              'Biografía',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              bio,
-              style: const TextStyle(
-                fontSize: 14,
-                fontStyle: FontStyle.italic, // mismo estilo que en EditProfile
-              ),
-            ),
-            const SizedBox(height: 16),
-          ],
-
-          if (_isCompanion) ...[
-            const Text(
-              'Disponibilidad:',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
-            ),
-            const SizedBox(height: 4),
-            Text(availabilityDays, style: const TextStyle(fontSize: 14)),
-            if (availabilityHours.isNotEmpty) ...[
-              const SizedBox(height: 2),
-              Text(availabilityHours, style: const TextStyle(fontSize: 14)),
-            ],
-            const SizedBox(height: 16),
-          ],
-
-          if (_isCompanion) ...[
-            const Text(
-              'Tarifas (15 min)',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
-            ),
-            const SizedBox(height: 4),
-            Text('Chat:  $chat15', style: const TextStyle(fontSize: 14)),
-            const SizedBox(height: 2),
-            Text('Voz:   $voice15', style: const TextStyle(fontSize: 14)),
-            const SizedBox(height: 2),
-            Text('Video: $video15', style: const TextStyle(fontSize: 14)),
-            const SizedBox(height: 16),
-          ],
-
-          if (_isCompanion && companionCode.isNotEmpty) ...[
-            const Text(
-              'Código de compañera',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
-            ),
-            const SizedBox(height: 4),
+            // ====== HEADER: alias + círculo estado ======
             Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 Expanded(
                   child: Text(
-                    companionCode,
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w500,
+                    alias.isNotEmpty ? alias : 'Usuario',
+                    style: theme.textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.bold,
                     ),
                   ),
                 ),
-                IconButton(
-                  icon: const Icon(Icons.copy),
-                  onPressed: () {
-                    Clipboard.setData(ClipboardData(text: companionCode));
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Código copiado al portapapeles'),
-                      ),
-                    );
-                  },
+                Container(
+                  width: 10,
+                  height: 10,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: isOnline ? Colors.green : Colors.grey,
+                  ),
                 ),
               ],
             ),
-            const SizedBox(height: 16),
-          ],
 
-          if (widget.onMakeOffer != null) ...[
-            const SizedBox(height: 8),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                onPressed: widget.onMakeOffer,
-                icon: const Icon(Icons.local_offer_outlined),
-                label: const Text('Hacer oferta'),
-              ),
+            const SizedBox(height: 4),
+
+            Text(
+              '${age ?? '--'} años · $gender',
+              style: theme.textTheme.bodyMedium,
             ),
-            const SizedBox(height: 16),
-          ],
 
-          // ====== Reportar / Bloquear funcionales ======
-          Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              IconButton(
-                tooltip: 'Reportar',
-                icon: const Icon(Icons.flag_outlined, size: 20),
-                onPressed: _handleReport,
-              ),
-              IconButton(
-                tooltip: 'Bloquear',
-                icon: const Icon(Icons.lock_outline, size: 20),
-                onPressed: _handleBlock,
+            if (city.isNotEmpty || country.isNotEmpty) ...[
+              const SizedBox(height: 2),
+              Text(
+                '$city${city.isNotEmpty && country.isNotEmpty ? ', ' : ''}$country',
+                style: theme.textTheme.bodyMedium,
               ),
             ],
-          ),
-        ],
+
+            const SizedBox(height: 8),
+
+            // ====== Calificación: OCULTA (no se muestra) ======
+
+            const SizedBox(height: 16),
+
+            if (bio.isNotEmpty) ...[
+              Text(
+                'Biografía',
+                style: theme.textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                bio,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
+              const SizedBox(height: 16),
+            ],
+
+            if (_isCompanion) ...[
+              Text(
+                'Disponibilidad:',
+                style: theme.textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(availabilityDays, style: theme.textTheme.bodyMedium),
+              if (availabilityHours.isNotEmpty) ...[
+                const SizedBox(height: 2),
+                Text(availabilityHours, style: theme.textTheme.bodyMedium),
+              ],
+              const SizedBox(height: 16),
+            ],
+
+            if (_isCompanion) ...[
+              Text(
+                'Tarifas (15 min)',
+                style: theme.textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 4),
+
+              // ✅ Una sola línea:
+              Text(
+                'Chat: $chat15 · Voz: $voice15 · Video: $video15',
+                style: theme.textTheme.bodyMedium,
+              ),
+
+              const SizedBox(height: 16),
+            ],
+
+            if (_isCompanion && companionCode.isNotEmpty) ...[
+              Text(
+                'Código de compañera',
+                style: theme.textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      companionCode,
+                      style: theme.textTheme.bodyLarge?.copyWith(
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.copy),
+                    onPressed: () {
+                      Clipboard.setData(ClipboardData(text: companionCode));
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Código copiado al portapapeles'),
+                        ),
+                      );
+                    },
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+            ],
+
+            if (widget.onMakeOffer != null) ...[
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: widget.onMakeOffer,
+                  icon: const Icon(Icons.local_offer_outlined),
+                  label: const Text('Hacer oferta'),
+                ),
+              ),
+              const SizedBox(height: 16),
+            ],
+
+            // ====== Reportar / Bloquear funcionales ======
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                IconButton(
+                  tooltip: 'Reportar',
+                  icon: const Icon(Icons.flag_outlined, size: 20),
+                  onPressed: _handleReport,
+                ),
+                IconButton(
+                  tooltip: 'Bloquear',
+                  icon: const Icon(Icons.lock_outline, size: 20),
+                  onPressed: _handleBlock,
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -973,24 +905,22 @@ class _FullScreenVideoPageState extends State<_FullScreenVideoPage> {
     try {
       _controller = VideoPlayerController.network(widget.url)
         ..setLooping(true)
-        ..initialize()
-            .then((_) {
-              if (!mounted) return;
-              setState(() {
-                _initialized = true;
-              });
-              _controller!.play();
-              setState(() {
-                _isPlaying = true;
-              });
-            })
-            .catchError((error) {
-              if (!mounted) return;
-              setState(() {
-                _hasError = true;
-                _errorMessage = error.toString();
-              });
-            });
+        ..initialize().then((_) {
+          if (!mounted) return;
+          setState(() {
+            _initialized = true;
+          });
+          _controller!.play();
+          setState(() {
+            _isPlaying = true;
+          });
+        }).catchError((error) {
+          if (!mounted) return;
+          setState(() {
+            _hasError = true;
+            _errorMessage = error.toString();
+          });
+        });
     } catch (e) {
       _hasError = true;
       _errorMessage = e.toString();
@@ -1078,7 +1008,7 @@ class _FullScreenVideoPageState extends State<_FullScreenVideoPage> {
             opacity: _isPlaying ? 0.0 : 1.0,
             duration: const Duration(milliseconds: 200),
             child: Container(
-              decoration: BoxDecoration(
+              decoration: const BoxDecoration(
                 color: Colors.black45,
                 shape: BoxShape.circle,
               ),

@@ -34,6 +34,9 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
   // Mostrar u ocultar el aviso de reglas
   bool _showBillingHint = true;
 
+  // ✅ Mostrar u ocultar el aviso de límites (solo compañera)
+  bool _showSafetyHint = true;
+
   // Para no disparar el timeout más de una vez
   bool _autoTimeoutTriggered = false;
 
@@ -51,9 +54,8 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
   @override
   void initState() {
     super.initState();
-    _sessionRef = FirebaseFirestore.instance
-        .collection('sessions')
-        .doc(widget.sessionId);
+    _sessionRef =
+        FirebaseFirestore.instance.collection('sessions').doc(widget.sessionId);
 
     // Escuchar la sesión en tiempo real para actualizar la UI
     _sessionLoading = true;
@@ -780,9 +782,7 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
                         statusLabel,
                         style: TextStyle(
                           fontSize: 11,
-                          color: isActive
-                              ? Colors.greenAccent
-                              : Colors.redAccent,
+                          color: isActive ? Colors.greenAccent : Colors.redAccent,
                         ),
                       ),
                     ],
@@ -792,14 +792,11 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
             ),
 
             // ======================================================
-            // 🔸 BARRA DE PROGRESO DE LA SESIÓN
+            // 🔸 BARRA DE PROGRESO DE LA SESIÓN (✅ FIX COLOR / TRACK)
             // ======================================================
             if (isActive && createdAt != null)
               Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 4,
-                ),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                 child: StreamBuilder<int>(
                   stream: Stream.periodic(const Duration(seconds: 1), (_) {
                     final diff = DateTime.now().difference(createdAt).inSeconds;
@@ -812,13 +809,13 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
                     double progress = 0;
                     if (totalSessionSeconds > 0) {
                       progress = totalSeconds / totalSessionSeconds;
+                      if (progress.isNaN || progress.isInfinite) progress = 0;
                       if (progress < 0) progress = 0;
                       if (progress > 1) progress = 1;
                     }
 
-                    final percent = (progress * 100)
-                        .clamp(0, 100)
-                        .toStringAsFixed(0);
+                    final percent =
+                        (progress * 100).clamp(0, 100).toStringAsFixed(0);
 
                     return Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -828,16 +825,17 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
                           child: LinearProgressIndicator(
                             value: progress,
                             minHeight: 6,
+                            // ✅ en lugar del verde del theme
+                            color: const Color(0xFF4F46E5),
+                            // ✅ track neutro (evita que se vea “relleno” desde inicio)
+                            backgroundColor: Colors.white12,
                           ),
                         ),
                         const SizedBox(height: 4),
                         Text(
                           'Progreso de la sesión: $percent%',
                           textAlign: TextAlign.right,
-                          style: const TextStyle(
-                            fontSize: 11,
-                            color: Colors.grey,
-                          ),
+                          style: const TextStyle(fontSize: 11, color: Colors.grey),
                         ),
                       ],
                     );
@@ -846,14 +844,32 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
               ),
 
             // ======================================================
+            // 🔸 AVISO LÍMITES (✅ SOLO COMPAÑERA, CERRABLE)
+            // ======================================================
+            if (isActive && !isSpeakerInSession && _showSafetyHint)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                child: Stack(
+                  children: [
+                    _buildSafetyHintForCompanion(),
+                    Positioned(
+                      right: 4,
+                      top: 4,
+                      child: InkWell(
+                        onTap: () => setState(() => _showSafetyHint = false),
+                        child: const Icon(Icons.close, size: 16),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+            // ======================================================
             // 🔸 AVISO DE REGLA DE COBRO (con botón de cerrar)
             // ======================================================
             if (isActive && _showBillingHint)
               Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 4,
-                ),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                 child: Stack(
                   children: [
                     _buildBillingHint(isSpeakerInSession),
@@ -945,19 +961,16 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
                       if (createdAtMsg == null) {
                         final localMs = msg['localCreatedAtMs'] as int?;
                         if (localMs != null) {
-                          createdAtMsg = DateTime.fromMillisecondsSinceEpoch(
-                            localMs,
-                          );
+                          createdAtMsg =
+                              DateTime.fromMillisecondsSinceEpoch(localMs);
                         }
                       }
 
                       String timeLabel = '--:--';
                       if (createdAtMsg != null) {
                         final hh = createdAtMsg.hour.toString().padLeft(2, '0');
-                        final mm = createdAtMsg.minute.toString().padLeft(
-                          2,
-                          '0',
-                        );
+                        final mm =
+                            createdAtMsg.minute.toString().padLeft(2, '0');
                         timeLabel = '$hh:$mm';
                       }
 
@@ -991,15 +1004,15 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
                               fit: BoxFit.cover,
                               loadingBuilder:
                                   (context, child, loadingProgress) {
-                                    if (loadingProgress == null) {
-                                      return child;
-                                    }
-                                    return Container(
-                                      height: 180,
-                                      alignment: Alignment.center,
-                                      child: const CircularProgressIndicator(),
-                                    );
-                                  },
+                                if (loadingProgress == null) {
+                                  return child;
+                                }
+                                return Container(
+                                  height: 180,
+                                  alignment: Alignment.center,
+                                  child: const CircularProgressIndicator(),
+                                );
+                              },
                             ),
                           ),
                         );
@@ -1125,9 +1138,8 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
                         minLines: 1,
                         readOnly: !isActive,
                         decoration: InputDecoration(
-                          hintText: isActive
-                              ? 'Escribe un mensaje...'
-                              : 'Sesión finalizada',
+                          hintText:
+                              isActive ? 'Escribe un mensaje...' : 'Sesión finalizada',
                           border: const OutlineInputBorder(),
                         ),
                         onSubmitted: (_) {
@@ -1161,14 +1173,12 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
   // ============================================================
   Widget _buildBillingHint(bool isSpeaker) {
     final icon = isSpeaker ? Icons.warning_amber_rounded : Icons.info;
-    final bgColor = isSpeaker
-        ? Colors.red.withOpacity(0.12)
-        : Colors.green.withOpacity(0.12);
+    final bgColor =
+        isSpeaker ? Colors.red.withOpacity(0.12) : Colors.green.withOpacity(0.12);
     final borderColor = isSpeaker ? Colors.redAccent : Colors.greenAccent;
 
-    final title = isSpeaker
-        ? 'Importante para ti (hablante)'
-        : 'Importante para ti (compañera)';
+    final title =
+        isSpeaker ? 'Importante para ti (hablante)' : 'Importante para ti (compañera)';
 
     final text = isSpeaker
         ? 'Si tú terminas la sesión antes de tiempo, se cobra el total de minutos reservados.'
@@ -1192,13 +1202,50 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
               children: [
                 Text(
                   title,
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                  ),
+                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
                 ),
                 const SizedBox(height: 2),
                 Text(text, style: const TextStyle(fontSize: 11)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ============================================================
+  // ✅ Aviso para la compañera: límites y cierre de conversación
+  // ============================================================
+  Widget _buildSafetyHintForCompanion() {
+    const title = 'Antes de iniciar (para ti, compañera)';
+    const text =
+        'Te recomendamos establecer límites claros desde el principio (temas que no quieres tratar, tono, duración y reglas de respeto). '
+        'Procura también cerrar las conversaciones que inicias: si algo queda pendiente, retómenlo de forma ordenada; si ya quedó resuelto, finalicen la sesión con claridad. '
+        'Si en cualquier momento te sientes incómoda o se te falta al respeto, tienes total libertad de pausar o finalizar la sesión de inmediato.';
+
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFF4F46E5).withOpacity(0.12),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFF4F46E5).withOpacity(0.55)),
+      ),
+      padding: const EdgeInsets.fromLTRB(10, 8, 22, 8),
+      child: const Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.shield_outlined, size: 18),
+          SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                ),
+                SizedBox(height: 2),
+                Text(text, style: TextStyle(fontSize: 11)),
               ],
             ),
           ),

@@ -181,338 +181,367 @@ class _HomeTabState extends State<HomeTab> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+
+    // ✅ Tema visual (solo valores de color)
+    const bgA = Color(0xFF020617); // slate-950
+    const bgB = Color(0xFF0B1B4D); // blue-ish deep
+    const bgC = Color(0xFF0F172A); // slate-900
+
+    final bottomPad = MediaQuery.of(context).padding.bottom;
+
     final user = FirebaseAuth.instance.currentUser;
 
     if (user == null) {
-      return const Center(
-        child: Text('Debes iniciar sesión para ver tu inicio.'),
+      return Center(
+        child: Text(
+          'Debes iniciar sesión para ver tu inicio.',
+          style: theme.textTheme.bodyMedium,
+          textAlign: TextAlign.center,
+        ),
       );
     }
 
     final uid = user.uid;
 
-    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-      stream: FirebaseFirestore.instance.collection('sessions').snapshots(),
-      builder: (context, sessionsSnap) {
-        if (sessionsSnap.hasError) {
-          return Center(
-            child: Text(
-              'Error leyendo sesiones: ${sessionsSnap.error}',
-              textAlign: TextAlign.center,
-            ),
-          );
-        }
-
-        // ✅ Loader SOLO la primera vez (evita parpadeo al ordenar/buscar)
-        if (sessionsSnap.connectionState == ConnectionState.waiting &&
-            !_loadedOnce) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        if (sessionsSnap.connectionState != ConnectionState.waiting) {
-          _loadedOnce = true;
-        }
-
-        final rawDocs = sessionsSnap.data?.docs ?? const [];
-
-        final myVisibleDocs = rawDocs
-            .where((doc) => _isMySession(doc.data(), uid))
-            .where((doc) => !_isHiddenForMe(doc.data(), uid))
-            .toList();
-
-        final historySessions = myVisibleDocs.where((doc) {
-          final status = _safeStr(doc.data()['status']);
-          return status == 'completed' || status == 'cancelled';
-        }).toList();
-
-        // ===== Personas: agregamos por otherUid (de TODAS mis sesiones visibles) =====
-        final Map<String, _PersonAgg> peopleMap = {};
-        for (final doc in myVisibleDocs) {
-          final d = doc.data();
-          final speakerId = _safeStr(d['speakerId']);
-          final companionId = _safeStr(d['companionId']);
-          final isSpeaker = speakerId == uid;
-
-          final otherUid = isSpeaker ? companionId : speakerId;
-          if (otherUid.isEmpty) continue;
-
-          final speakerAlias = _safeStr(d['speakerAlias'], fallback: 'Hablante');
-          final companionAlias =
-              _safeStr(d['companionAlias'], fallback: 'Compañera');
-          final otherAlias = isSpeaker ? companionAlias : speakerAlias;
-
-          Timestamp? lastAt;
-          final completedAt = d['completedAt'];
-          final createdAt = d['createdAt'];
-          final updatedAt = d['updatedAt'];
-
-          // preferimos "última interacción" con algo razonable
-          if (updatedAt is Timestamp) lastAt = updatedAt;
-          if (lastAt == null && completedAt is Timestamp) lastAt = completedAt;
-          if (lastAt == null && createdAt is Timestamp) lastAt = createdAt;
-
-          final current = peopleMap[otherUid];
-          if (current == null) {
-            peopleMap[otherUid] = _PersonAgg(
-              otherUid: otherUid,
-              alias: otherAlias,
-              lastAt: lastAt,
-              count: 1,
+    return Container(
+      // ✅ Fondo gradiente tipo “theme preview”
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [bgA, bgB, bgC],
+        ),
+      ),
+      child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+        stream: FirebaseFirestore.instance.collection('sessions').snapshots(),
+        builder: (context, sessionsSnap) {
+          if (sessionsSnap.hasError) {
+            return Center(
+              child: Text(
+                'Error leyendo sesiones: ${sessionsSnap.error}',
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodyMedium?.copyWith(color: Colors.white),
+              ),
             );
-          } else {
-            current.count += 1;
-            if (lastAt != null) {
-              final cur = current.lastAt;
-              if (cur == null || lastAt.compareTo(cur) > 0) {
-                current.lastAt = lastAt;
-              }
-            }
-            if (current.alias.trim().isEmpty) current.alias = otherAlias;
           }
-        }
 
-        // Leemos hiddenPeople del usuario (para filtrar lista Personas)
-        return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-          stream:
-              FirebaseFirestore.instance.collection('users').doc(uid).snapshots(),
-          builder: (context, userSnap) {
-            final userData = userSnap.data?.data() ?? const <String, dynamic>{};
+          // ✅ Loader SOLO la primera vez (evita parpadeo al ordenar/buscar)
+          if (sessionsSnap.connectionState == ConnectionState.waiting &&
+              !_loadedOnce) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          if (sessionsSnap.connectionState != ConnectionState.waiting) {
+            _loadedOnce = true;
+          }
 
-            final hiddenPeople = (userData['hiddenPeople'] as List<dynamic>?)
-                    ?.map((e) => e.toString())
-                    .toSet() ??
-                <String>{};
+          final rawDocs = sessionsSnap.data?.docs ?? const [];
 
-            // Rol (ajusta según tu schema si usas otro campo)
-            final roleRaw = (userData['role'] ?? userData['userRole'] ?? '')
-                .toString()
-                .toLowerCase()
-                .trim();
+          final myVisibleDocs = rawDocs
+              .where((doc) => _isMySession(doc.data(), uid))
+              .where((doc) => !_isHiddenForMe(doc.data(), uid))
+              .toList();
 
-            final isSpeakerRole = roleRaw.contains('speaker') ||
-                roleRaw.contains('hablante') ||
-                roleRaw == 's';
+          final historySessions = myVisibleDocs.where((doc) {
+            final status = _safeStr(doc.data()['status']);
+            return status == 'completed' || status == 'cancelled';
+          }).toList();
 
-            // ====== PEOPLE: filtro por hiddenPeople ======
-            final people = peopleMap.values
-                .where((p) => !hiddenPeople.contains(p.otherUid))
-                .toList();
+          // ===== Personas: agregamos por otherUid (de TODAS mis sesiones visibles) =====
+          final Map<String, _PersonAgg> peopleMap = {};
+          for (final doc in myVisibleDocs) {
+            final d = doc.data();
+            final speakerId = _safeStr(d['speakerId']);
+            final companionId = _safeStr(d['companionId']);
+            final isSpeaker = speakerId == uid;
 
-            // ====== PEOPLE: sort por modo (newest/oldest) ======
-            people.sort((a, b) {
-              final at = a.lastAt;
-              final bt = b.lastAt;
+            final otherUid = isSpeaker ? companionId : speakerId;
+            if (otherUid.isEmpty) continue;
 
-              // si no hay fecha, se van al final
-              if (at == null && bt == null) return 0;
-              if (at == null) return 1;
-              if (bt == null) return -1;
+            final speakerAlias = _safeStr(d['speakerAlias'], fallback: 'Hablante');
+            final companionAlias =
+                _safeStr(d['companionAlias'], fallback: 'Compañera');
+            final otherAlias = isSpeaker ? companionAlias : speakerAlias;
 
-              if (_peopleSort == PeopleSortMode.newest) {
-                return bt.compareTo(at);
-              } else {
-                return at.compareTo(bt);
+            Timestamp? lastAt;
+            final completedAt = d['completedAt'];
+            final createdAt = d['createdAt'];
+            final updatedAt = d['updatedAt'];
+
+            // preferimos "última interacción" con algo razonable
+            if (updatedAt is Timestamp) lastAt = updatedAt;
+            if (lastAt == null && completedAt is Timestamp) lastAt = completedAt;
+            if (lastAt == null && createdAt is Timestamp) lastAt = createdAt;
+
+            final current = peopleMap[otherUid];
+            if (current == null) {
+              peopleMap[otherUid] = _PersonAgg(
+                otherUid: otherUid,
+                alias: otherAlias,
+                lastAt: lastAt,
+                count: 1,
+              );
+            } else {
+              current.count += 1;
+              if (lastAt != null) {
+                final cur = current.lastAt;
+                if (cur == null || lastAt.compareTo(cur) > 0) {
+                  current.lastAt = lastAt;
+                }
               }
-            });
+              if (current.alias.trim().isEmpty) current.alias = otherAlias;
+            }
+          }
 
-            // ====== HISTORY: sort por modo (newest/oldest) ======
-            historySessions.sort((a, b) {
-              final ad = a.data()['completedAt'];
-              final bd = b.data()['completedAt'];
-              if (ad is! Timestamp || bd is! Timestamp) return 0;
-              if (_historySort == HistorySortMode.newest) {
-                return bd.compareTo(ad);
-              } else {
-                return ad.compareTo(bd);
-              }
-            });
+          // Leemos hiddenPeople del usuario (para filtrar lista Personas)
+          return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+            stream:
+                FirebaseFirestore.instance.collection('users').doc(uid).snapshots(),
+            builder: (context, userSnap) {
+              final userData = userSnap.data?.data() ?? const <String, dynamic>{};
 
-            return ListView(
-              // ✅ Más aire arriba (antes 22)
-              padding: const EdgeInsets.fromLTRB(16, 36, 16, 110),
-              children: [
-                _RoleInviteBanner(
-                  isSpeaker: isSpeakerRole,
-                  onGoToOffers: _goToOffers,
-                ),
+              final hiddenPeople = (userData['hiddenPeople'] as List<dynamic>?)
+                      ?.map((e) => e.toString())
+                      .toSet() ??
+                  <String>{};
 
-                const SizedBox(height: 18),
+              // Rol (ajusta según tu schema si usas otro campo)
+              final roleRaw = (userData['role'] ?? userData['userRole'] ?? '')
+                  .toString()
+                  .toLowerCase()
+                  .trim();
 
-                // =========================
-                // Personas
-                // =========================
-                _CollapsibleHeader(
-                  icon: Icons.people_alt_outlined,
-                  iconColor: Colors.tealAccent,
-                  title: 'historial de perfiles publicos',
-                  countLabel: people.isEmpty
-                      ? ''
-                      : '${people.length} persona${people.length == 1 ? '' : 's'}',
-                  expanded: _peopleExpanded,
-                  onTap: () => setState(() => _peopleExpanded = !_peopleExpanded),
-                ),
-                const SizedBox(height: 6),
+              final isSpeakerRole = roleRaw.contains('speaker') ||
+                  roleRaw.contains('hablante') ||
+                  roleRaw == 's';
 
-                // Barra de búsqueda + ordenar (Personas)
-                if (_peopleExpanded) ...[
-                  _SearchAndSortBar(
-                    hintText: 'Buscar personas…',
-                    controller: _peopleSearchC,
-                    onChanged: (_) => setState(() {}),
-                    sortWidget: DropdownButton<PeopleSortMode>(
-                      value: _peopleSort,
-                      onChanged: (v) {
-                        if (v == null) return;
-                        setState(() => _peopleSort = v);
-                      },
-                      items: const [
-                        DropdownMenuItem(
-                          value: PeopleSortMode.newest,
-                          child: Text('Más reciente'),
-                        ),
-                        DropdownMenuItem(
-                          value: PeopleSortMode.oldest,
-                          child: Text('Más antiguo'),
-                        ),
-                      ],
-                    ),
+              // ====== PEOPLE: filtro por hiddenPeople ======
+              final people = peopleMap.values
+                  .where((p) => !hiddenPeople.contains(p.otherUid))
+                  .toList();
+
+              // ====== PEOPLE: sort por modo (newest/oldest) ======
+              people.sort((a, b) {
+                final at = a.lastAt;
+                final bt = b.lastAt;
+
+                // si no hay fecha, se van al final
+                if (at == null && bt == null) return 0;
+                if (at == null) return 1;
+                if (bt == null) return -1;
+
+                if (_peopleSort == PeopleSortMode.newest) {
+                  return bt.compareTo(at);
+                } else {
+                  return at.compareTo(bt);
+                }
+              });
+
+              // ====== HISTORY: sort por modo (newest/oldest) ======
+              historySessions.sort((a, b) {
+                final ad = a.data()['completedAt'];
+                final bd = b.data()['completedAt'];
+                if (ad is! Timestamp || bd is! Timestamp) return 0;
+                if (_historySort == HistorySortMode.newest) {
+                  return bd.compareTo(ad);
+                } else {
+                  return ad.compareTo(bd);
+                }
+              });
+
+              return ListView(
+                // ✅ Ajuste: bottom respeta safe area (antes era fijo 110)
+                padding: EdgeInsets.fromLTRB(16, 36, 16, 110 + bottomPad),
+                children: [
+                  _RoleInviteBanner(
+                    isSpeaker: isSpeakerRole,
+                    onGoToOffers: _goToOffers,
                   ),
-                  const SizedBox(height: 8),
-                ],
 
-                AnimatedCrossFade(
-                  duration: const Duration(milliseconds: 250),
-                  crossFadeState: _peopleExpanded
-                      ? CrossFadeState.showFirst
-                      : CrossFadeState.showSecond,
-                  firstChild: people.isEmpty
-                      ? Padding(
-                          padding: const EdgeInsets.all(14),
-                          child: Text(
-                            'Aún no has interactuado con nadie.',
-                            style: TextStyle(color: Colors.grey.shade400),
-                          ),
-                        )
-                      : Column(
-                          children: [
-                            const SizedBox(height: 6),
-                            for (final p in people)
-                              _PersonTile(
-                                person: p,
-                                myUid: uid,
-                                peopleQuery: _peopleSearchC.text,
-                                matchesPeopleQuery: _matchesPeopleQuery,
-                                fmtDate: _fmtDate,
-                                getUserData: _getUserData,
-                                confirmDialog: _confirmDialog,
-                                onHidePerson: _hidePersonForMe,
-                                onCopy: _copyToClipboard,
-                                onOpenProfile: (otherUid) {
-                                  Navigator.of(context).push(
-                                    MaterialPageRoute(
-                                      builder: (_) => PublicProfileScreen(
-                                        companionUid: otherUid,
-                                        enableMakeOfferButton: false,
-                                      ),
-                                    ),
-                                  );
-                                },
-                              ),
-                          ],
-                        ),
-                  secondChild: const SizedBox.shrink(),
-                ),
+                  const SizedBox(height: 18),
 
-                const SizedBox(height: 22),
-
-                // =========================
-                // Historial
-                // =========================
-                _CollapsibleHeader(
-                  icon: Icons.history,
-                  iconColor: Colors.lightBlueAccent,
-                  title: 'Historial de conversaciones',
-                  countLabel: historySessions.isEmpty
-                      ? ''
-                      : '${historySessions.length} sesión${historySessions.length == 1 ? '' : 'es'}',
-                  expanded: _historyExpanded,
-                  onTap: () => setState(() => _historyExpanded = !_historyExpanded),
-                ),
-                const SizedBox(height: 6),
-
-                // Barra de búsqueda + ordenar (Historial)
-                if (_historyExpanded) ...[
-                  _SearchAndSortBar(
-                    hintText: 'Buscar en historial…',
-                    controller: _historySearchC,
-                    onChanged: (_) => setState(() {}),
-                    sortWidget: DropdownButton<HistorySortMode>(
-                      value: _historySort,
-                      onChanged: (v) {
-                        if (v == null) return;
-                        setState(() => _historySort = v);
-                      },
-                      items: const [
-                        DropdownMenuItem(
-                          value: HistorySortMode.newest,
-                          child: Text('Más reciente'),
-                        ),
-                        DropdownMenuItem(
-                          value: HistorySortMode.oldest,
-                          child: Text('Más antiguo'),
-                        ),
-                      ],
-                    ),
+                  // =========================
+                  // Personas
+                  // =========================
+                  _CollapsibleHeader(
+                    icon: Icons.people_alt_outlined,
+                    iconColor: cs.primary,
+                    title: 'Historial de perfiles públicos',
+                    countLabel: people.isEmpty
+                        ? ''
+                        : '${people.length} persona${people.length == 1 ? '' : 's'}',
+                    expanded: _peopleExpanded,
+                    onTap: () => setState(() => _peopleExpanded = !_peopleExpanded),
                   ),
-                  const SizedBox(height: 8),
-                ],
+                  const SizedBox(height: 6),
 
-                AnimatedCrossFade(
-                  duration: const Duration(milliseconds: 250),
-                  crossFadeState: _historyExpanded
-                      ? CrossFadeState.showFirst
-                      : CrossFadeState.showSecond,
-                  firstChild: historySessions.isEmpty
-                      ? Padding(
-                          padding: const EdgeInsets.all(14),
-                          child: Text(
-                            'No hay sesiones finalizadas todavía.',
-                            style: TextStyle(color: Colors.grey.shade400),
+                  // Barra de búsqueda + ordenar (Personas)
+                  if (_peopleExpanded) ...[
+                    _SearchAndSortBar(
+                      hintText: 'Buscar personas…',
+                      controller: _peopleSearchC,
+                      onChanged: (_) => setState(() {}),
+                      sortWidget: DropdownButton<PeopleSortMode>(
+                        value: _peopleSort,
+                        onChanged: (v) {
+                          if (v == null) return;
+                          setState(() => _peopleSort = v);
+                        },
+                        items: const [
+                          DropdownMenuItem(
+                            value: PeopleSortMode.newest,
+                            child: Text('Más reciente'),
                           ),
-                        )
-                      : Column(
-                          children: [
-                            const SizedBox(height: 6),
-                            for (final doc in historySessions)
-                              _HistorySessionCard(
-                                doc: doc,
-                                myUid: uid,
-                                historyQuery: _historySearchC.text,
-                                matchesHistoryQuery: _matchesHistoryQuery,
-                                fmtDate: _fmtDate,
-                                getUserData: _getUserData,
-                                confirmDialog: _confirmDialog,
-                                onHideSession: _hideSessionForMe,
-                                onCopy: _copyToClipboard,
-                                onOpen: (sessionId) {
-                                  Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (_) => SessionConversationScreen(
-                                        sessionId: sessionId,
-                                      ),
-                                    ),
-                                  );
-                                },
+                          DropdownMenuItem(
+                            value: PeopleSortMode.oldest,
+                            child: Text('Más antiguo'),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+
+                  AnimatedCrossFade(
+                    duration: const Duration(milliseconds: 250),
+                    crossFadeState: _peopleExpanded
+                        ? CrossFadeState.showFirst
+                        : CrossFadeState.showSecond,
+                    firstChild: people.isEmpty
+                        ? Padding(
+                            padding: const EdgeInsets.all(14),
+                            child: Text(
+                              'Aún no has interactuado con nadie.',
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: Colors.white70,
                               ),
-                          ],
-                        ),
-                  secondChild: const SizedBox.shrink(),
-                ),
-              ],
-            );
-          },
-        );
-      },
+                            ),
+                          )
+                        : Column(
+                            children: [
+                              const SizedBox(height: 6),
+                              for (final p in people)
+                                _PersonTile(
+                                  person: p,
+                                  myUid: uid,
+                                  peopleQuery: _peopleSearchC.text,
+                                  matchesPeopleQuery: _matchesPeopleQuery,
+                                  fmtDate: _fmtDate,
+                                  getUserData: _getUserData,
+                                  confirmDialog: _confirmDialog,
+                                  onHidePerson: _hidePersonForMe,
+                                  onCopy: _copyToClipboard,
+                                  onOpenProfile: (otherUid) {
+                                    Navigator.of(context).push(
+                                      MaterialPageRoute(
+                                        builder: (_) => PublicProfileScreen(
+                                          companionUid: otherUid,
+                                          enableMakeOfferButton: false,
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                ),
+                            ],
+                          ),
+                    secondChild: const SizedBox.shrink(),
+                  ),
+
+                  const SizedBox(height: 22),
+
+                  // =========================
+                  // Historial
+                  // =========================
+                  _CollapsibleHeader(
+                    icon: Icons.history,
+                    iconColor: cs.secondary,
+                    title: 'Historial de conversaciones',
+                    countLabel: historySessions.isEmpty
+                        ? ''
+                        : '${historySessions.length} sesión${historySessions.length == 1 ? '' : 'es'}',
+                    expanded: _historyExpanded,
+                    onTap: () => setState(() => _historyExpanded = !_historyExpanded),
+                  ),
+                  const SizedBox(height: 6),
+
+                  // Barra de búsqueda + ordenar (Historial)
+                  if (_historyExpanded) ...[
+                    _SearchAndSortBar(
+                      hintText: 'Buscar en historial…',
+                      controller: _historySearchC,
+                      onChanged: (_) => setState(() {}),
+                      sortWidget: DropdownButton<HistorySortMode>(
+                        value: _historySort,
+                        onChanged: (v) {
+                          if (v == null) return;
+                          setState(() => _historySort = v);
+                        },
+                        items: const [
+                          DropdownMenuItem(
+                            value: HistorySortMode.newest,
+                            child: Text('Más reciente'),
+                          ),
+                          DropdownMenuItem(
+                            value: HistorySortMode.oldest,
+                            child: Text('Más antiguo'),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+
+                  AnimatedCrossFade(
+                    duration: const Duration(milliseconds: 250),
+                    crossFadeState: _historyExpanded
+                        ? CrossFadeState.showFirst
+                        : CrossFadeState.showSecond,
+                    firstChild: historySessions.isEmpty
+                        ? Padding(
+                            padding: const EdgeInsets.all(14),
+                            child: Text(
+                              'No hay sesiones finalizadas todavía.',
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: Colors.white70,
+                              ),
+                            ),
+                          )
+                        : Column(
+                            children: [
+                              const SizedBox(height: 6),
+                              for (final doc in historySessions)
+                                _HistorySessionCard(
+                                  doc: doc,
+                                  myUid: uid,
+                                  historyQuery: _historySearchC.text,
+                                  matchesHistoryQuery: _matchesHistoryQuery,
+                                  fmtDate: _fmtDate,
+                                  getUserData: _getUserData,
+                                  confirmDialog: _confirmDialog,
+                                  onHideSession: _hideSessionForMe,
+                                  onCopy: _copyToClipboard,
+                                  onOpen: (sessionId) {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (_) => SessionConversationScreen(
+                                          sessionId: sessionId,
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                ),
+                            ],
+                          ),
+                    secondChild: const SizedBox.shrink(),
+                  ),
+                ],
+              );
+            },
+          );
+        },
+      ),
     );
   }
 }
@@ -528,6 +557,9 @@ class _RoleInviteBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+
     final title = isSpeaker
         ? '¡Empieza una conversación!'
         : '¡Encuentra una conversación!';
@@ -542,12 +574,20 @@ class _RoleInviteBanner extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(14),
-        color: Colors.white10,
-        border: Border.all(color: Colors.white12),
+        // ✅ Panel translúcido tipo “glass” en fondo oscuro
+        color: Colors.white.withOpacity(0.06),
+        border: Border.all(color: cs.primary.withOpacity(0.25), width: 1),
+        boxShadow: [
+          BoxShadow(
+            color: cs.primary.withOpacity(0.18),
+            blurRadius: 18,
+            offset: const Offset(0, 10),
+          ),
+        ],
       ),
       child: Row(
         children: [
-          const Icon(Icons.chat_bubble_outline, size: 22),
+          Icon(Icons.chat_bubble_outline, size: 22, color: cs.primary),
           const SizedBox(width: 10),
           Expanded(
             child: Column(
@@ -555,13 +595,17 @@ class _RoleInviteBanner extends StatelessWidget {
               children: [
                 Text(
                   title,
-                  style:
-                      const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w800,
+                    color: Colors.white,
+                  ),
                 ),
                 const SizedBox(height: 6),
                 Text(
                   body,
-                  style: const TextStyle(color: Colors.grey, fontSize: 13),
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: Colors.white70,
+                  ),
                 ),
               ],
             ),
@@ -569,6 +613,14 @@ class _RoleInviteBanner extends StatelessWidget {
           const SizedBox(width: 10),
           TextButton(
             onPressed: onGoToOffers,
+            style: TextButton.styleFrom(
+              foregroundColor: Colors.white,
+              backgroundColor: cs.primary,
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
             child: Text(cta),
           ),
         ],
@@ -592,23 +644,49 @@ class _SearchAndSortBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+
+    final outline = cs.primary.withOpacity(0.30);
+
     return Row(
       children: [
         Expanded(
           child: TextField(
             controller: controller,
             onChanged: onChanged,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: const Color(0xFF0F172A),
+              fontWeight: FontWeight.w700,
+            ),
             decoration: InputDecoration(
               hintText: hintText,
-              prefixIcon: const Icon(Icons.search),
+              hintStyle: theme.textTheme.bodySmall?.copyWith(
+                color: const Color(0xFF64748B),
+                fontWeight: FontWeight.w600,
+              ),
+              prefixIcon: const Icon(Icons.search, size: 18, color: Color(0xFF64748B)),
               isDense: true,
-              border:
-                  OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+              filled: true,
+              fillColor: Colors.white,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+
+              // ✅ borde emerald como el preview web
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: outline, width: 1.6),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: cs.primary, width: 2),
+              ),
+
+              // lo controla tu InputDecorationTheme
               suffixIcon: controller.text.isEmpty
                   ? null
                   : IconButton(
                       tooltip: 'Limpiar',
-                      icon: const Icon(Icons.close),
+                      icon: const Icon(Icons.close, size: 18, color: Color(0xFF64748B)),
                       onPressed: () {
                         controller.clear();
                         onChanged('');
@@ -622,9 +700,33 @@ class _SearchAndSortBar extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 10),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: Colors.white24),
+            border: Border.all(color: outline, width: 1.6),
+            color: Colors.white,
+            boxShadow: const [
+              BoxShadow(
+                color: Colors.black12,
+                blurRadius: 10,
+                offset: Offset(0, 6),
+              ),
+            ],
           ),
-          child: sortWidget,
+          child: Theme(
+            data: theme.copyWith(
+              canvasColor: Colors.white,
+            ),
+            child: DropdownButtonHideUnderline(
+              child: DefaultTextStyle(
+                style: theme.textTheme.bodySmall!.copyWith(
+                  color: const Color(0xFF0F172A),
+                  fontWeight: FontWeight.w800,
+                ),
+                child: IconTheme(
+                  data: const IconThemeData(color: Color(0xFF0F172A)),
+                  child: sortWidget,
+                ),
+              ),
+            ),
+          ),
         ),
       ],
     );
@@ -650,6 +752,8 @@ class _CollapsibleHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
     return GestureDetector(
       onTap: onTap,
       child: Row(
@@ -658,18 +762,24 @@ class _CollapsibleHeader extends StatelessWidget {
           const SizedBox(width: 6),
           Text(
             title,
-            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            style: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w800,
+              color: Colors.white,
+            ),
           ),
           const Spacer(),
           if (countLabel.isNotEmpty)
             Text(
               countLabel,
-              style: const TextStyle(fontSize: 12, color: Colors.grey),
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: Colors.white70,
+              ),
             ),
           const SizedBox(width: 4),
           Icon(
             expanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
             size: 26,
+            color: Colors.white70,
           ),
         ],
       ),
@@ -730,6 +840,11 @@ class _PersonTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+
+    final borderColor = cs.primary.withOpacity(0.30);
+
     return FutureBuilder<Map<String, dynamic>>(
       future: getUserData(person.otherUid),
       builder: (context, snap) {
@@ -737,7 +852,8 @@ class _PersonTile extends StatelessWidget {
         final companionCode =
             (userData['companionCode'] as String?)?.trim() ?? '';
         final aliasFromUsers = (userData['alias'] as String?)?.trim() ?? '';
-        final showAlias = aliasFromUsers.isNotEmpty ? aliasFromUsers : person.alias;
+        final showAlias =
+            aliasFromUsers.isNotEmpty ? aliasFromUsers : person.alias;
 
         final lastStr = fmtDate(person.lastAt);
 
@@ -756,10 +872,10 @@ class _PersonTile extends StatelessWidget {
             alignment: Alignment.centerRight,
             padding: const EdgeInsets.symmetric(horizontal: 16),
             decoration: BoxDecoration(
-              color: Colors.redAccent.withOpacity(0.25),
+              color: cs.error.withOpacity(0.12),
               borderRadius: BorderRadius.circular(12),
             ),
-            child: const Icon(Icons.delete_outline, color: Colors.redAccent),
+            child: Icon(Icons.delete_outline, color: cs.error),
           ),
           confirmDismiss: (_) async {
             return confirmDialog(
@@ -773,29 +889,39 @@ class _PersonTile extends StatelessWidget {
             await onHidePerson(myUid: myUid, otherUid: person.otherUid);
           },
           child: Card(
-            color: Colors.white10,
-            elevation: 1,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            margin: const EdgeInsets.symmetric(vertical: 4),
+            // ✅ Card blanca tipo preview web
+            color: Colors.white,
+            elevation: 0,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+              side: BorderSide(color: borderColor, width: 1.6),
+            ),
+            margin: const EdgeInsets.symmetric(vertical: 6),
             child: ListTile(
               onTap: () => onOpenProfile(person.otherUid),
               leading: CircleAvatar(
                 radius: 18,
+                backgroundColor: cs.primary,
+                foregroundColor: Colors.white,
                 child: Text(
                   showAlias.isNotEmpty ? showAlias[0].toUpperCase() : '?',
+                  style: const TextStyle(fontWeight: FontWeight.w800),
                 ),
               ),
               title: Text(
                 showAlias,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  fontWeight: FontWeight.w800,
+                  color: const Color(0xFF0F172A),
+                ),
               ),
               subtitle: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   if (companionCode.isNotEmpty) ...[
-                    const SizedBox(height: 2),
+                    const SizedBox(height: 6),
                     Row(
                       children: [
                         Expanded(
@@ -803,24 +929,35 @@ class _PersonTile extends StatelessWidget {
                             'Código: $companionCode',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontSize: 12),
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              color: const Color(0xFFB91C1C), // rojo
+                              fontWeight: FontWeight.w700,
+                            ),
                           ),
                         ),
                         IconButton(
                           icon: const Icon(Icons.copy, size: 18),
-                          onPressed: () => onCopy(companionCode, toast: 'Código copiado.'),
+                          color: const Color(0xFF64748B),
+                          onPressed: () =>
+                              onCopy(companionCode, toast: 'Código copiado.'),
                         ),
                       ],
                     ),
                   ],
                   if (lastStr.isNotEmpty)
-                    Text(
-                      'Última interacción: $lastStr',
-                      style: const TextStyle(fontSize: 11, color: Colors.grey),
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Text(
+                        'Última interacción: $lastStr',
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: const Color(0xFFB91C1C).withOpacity(0.75),
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
                     ),
                 ],
               ),
-              trailing: const Icon(Icons.chevron_right),
+              trailing: const Icon(Icons.chevron_right, color: Color(0xFF64748B)),
             ),
           ),
         );
@@ -869,6 +1006,11 @@ class _HistorySessionCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+
+    final borderColor = cs.primary.withOpacity(0.30);
+
     final d = doc.data();
 
     final speakerAlias = (d['speakerAlias'] ?? 'Hablante').toString();
@@ -893,10 +1035,10 @@ class _HistorySessionCard extends StatelessWidget {
 
     // status label
     String statusLabel = 'Finalizada';
-    Color statusColor = Colors.greenAccent;
+    Color statusColor = cs.tertiary;
     if (status == 'cancelled') {
       statusLabel = 'Cancelada';
-      statusColor = Colors.redAccent;
+      statusColor = cs.error;
     } else if (endedBy == 'speaker') {
       statusLabel = 'Finalizada por hablante';
     } else if (endedBy == 'companion') {
@@ -933,10 +1075,10 @@ class _HistorySessionCard extends StatelessWidget {
             alignment: Alignment.centerRight,
             padding: const EdgeInsets.symmetric(horizontal: 16),
             decoration: BoxDecoration(
-              color: Colors.redAccent.withOpacity(0.25),
+              color: cs.error.withOpacity(0.12),
               borderRadius: BorderRadius.circular(12),
             ),
-            child: const Icon(Icons.delete_outline, color: Colors.redAccent),
+            child: Icon(Icons.delete_outline, color: cs.error),
           ),
           confirmDismiss: (_) async {
             return confirmDialog(
@@ -950,21 +1092,29 @@ class _HistorySessionCard extends StatelessWidget {
             await onHideSession(sessionId: doc.id, myUid: myUid);
           },
           child: Card(
-            color: Colors.white10,
-            elevation: 1,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            margin: const EdgeInsets.symmetric(vertical: 4),
+            // ✅ Card blanca con borde emerald tipo preview web
+            color: Colors.white,
+            elevation: 0,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+              side: BorderSide(color: borderColor, width: 1.6),
+            ),
+            margin: const EdgeInsets.symmetric(vertical: 6),
             child: InkWell(
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(14),
               onTap: () => onOpen(doc.id),
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                 child: Row(
                   children: [
                     CircleAvatar(
                       radius: 18,
+                      backgroundColor: cs.primary,
+                      foregroundColor: Colors.white,
                       child: Text(
                         otherAlias.isNotEmpty ? otherAlias[0].toUpperCase() : '?',
+                        style: const TextStyle(fontWeight: FontWeight.w800),
                       ),
                     ),
                     const SizedBox(width: 12),
@@ -976,13 +1126,13 @@ class _HistorySessionCard extends StatelessWidget {
                             otherAlias,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              fontWeight: FontWeight.w800,
+                              color: const Color(0xFF0F172A),
                             ),
                           ),
                           if (companionCode.isNotEmpty) ...[
-                            const SizedBox(height: 2),
+                            const SizedBox(height: 4),
                             Row(
                               children: [
                                 Expanded(
@@ -990,14 +1140,15 @@ class _HistorySessionCard extends StatelessWidget {
                                     'Código: $companionCode',
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      fontSize: 11,
-                                      color: Colors.white70,
+                                    style: theme.textTheme.labelSmall?.copyWith(
+                                      color: const Color(0xFFB91C1C),
+                                      fontWeight: FontWeight.w700,
                                     ),
                                   ),
                                 ),
                                 IconButton(
                                   icon: const Icon(Icons.copy, size: 18),
+                                  color: const Color(0xFF64748B),
                                   onPressed: () => onCopy(
                                     companionCode,
                                     toast: 'Código copiado.',
@@ -1006,30 +1157,40 @@ class _HistorySessionCard extends StatelessWidget {
                               ],
                             ),
                           ],
-                          const SizedBox(height: 4),
+                          const SizedBox(height: 6),
                           Text(
                             'Real: $real min • Cobro: $billed min',
-                            style: const TextStyle(fontSize: 11),
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              color: const Color(0xFF334155),
+                              fontWeight: FontWeight.w700,
+                            ),
                           ),
                           if (completedStr.isNotEmpty) ...[
                             const SizedBox(height: 2),
                             Text(
                               completedStr,
-                              style: const TextStyle(fontSize: 10, color: Colors.grey),
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                color: const Color(0xFF64748B),
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
                           ],
-                          const SizedBox(height: 6),
+                          const SizedBox(height: 8),
                           Row(
                             children: [
                               Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 8, vertical: 3),
                                 decoration: BoxDecoration(
-                                  color: statusColor.withOpacity(0.15),
-                                  borderRadius: BorderRadius.circular(10),
+                                  color: statusColor.withOpacity(0.14),
+                                  borderRadius: BorderRadius.circular(999),
                                 ),
                                 child: Text(
                                   statusLabel,
-                                  style: TextStyle(fontSize: 10, color: statusColor),
+                                  style: theme.textTheme.labelSmall?.copyWith(
+                                    color: statusColor,
+                                    fontWeight: FontWeight.w800,
+                                  ),
                                 ),
                               ),
                             ],
@@ -1040,9 +1201,9 @@ class _HistorySessionCard extends StatelessWidget {
                     const SizedBox(width: 10),
                     Text(
                       '\$${price.toStringAsFixed(2)} ${currency.toUpperCase()}',
-                      style: const TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 13,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w900,
+                        color: const Color(0xFF0F172A),
                       ),
                     ),
                   ],

@@ -595,6 +595,7 @@ class _FloatingQuadNav extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final cs = theme.colorScheme;
 
     Widget btn({
       required int i,
@@ -603,15 +604,17 @@ class _FloatingQuadNav extends StatelessWidget {
     }) {
       final selected = i == index;
 
+      final Color bg = selected ? cs.primary : cs.surface.withOpacity(0.85);
+      final Color fg = selected ? cs.onPrimary : cs.onSurfaceVariant;
+      final Color labelColor = selected ? cs.primary : cs.onSurfaceVariant;
+
       return Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           Material(
             elevation: selected ? 10 : 6,
             shape: const CircleBorder(),
-            color: selected
-                ? theme.colorScheme.primary.withOpacity(0.95)
-                : Colors.black.withOpacity(0.55),
+            color: bg,
             child: InkWell(
               customBorder: const CircleBorder(),
               onTap: () => onTap(i),
@@ -620,7 +623,7 @@ class _FloatingQuadNav extends StatelessWidget {
                 child: Icon(
                   icon,
                   size: 24,
-                  color: selected ? Colors.black : Colors.white,
+                  color: fg,
                 ),
               ),
             ),
@@ -628,10 +631,9 @@ class _FloatingQuadNav extends StatelessWidget {
           const SizedBox(height: 6),
           Text(
             label,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
-              color: selected ? theme.colorScheme.primary : Colors.white70,
+            style: theme.textTheme.labelSmall?.copyWith(
+              fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+              color: labelColor,
             ),
           ),
         ],
@@ -655,4 +657,3 @@ class _FloatingQuadNav extends StatelessWidget {
     );
   }
 }
-

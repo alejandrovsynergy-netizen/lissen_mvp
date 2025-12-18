@@ -293,6 +293,9 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   // ============================================================
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+
     final steps = <Widget>[
       RoleStep(
         role: _role,
@@ -357,8 +360,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                   const SizedBox(height: 8),
                   Text(
                     _error!,
-                    style: const TextStyle(
-                      color: Colors.redAccent,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: cs.error,
                       fontSize: 13,
                     ),
                   ),
@@ -368,7 +371,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           ),
         ),
       ),
-      bottomNavigationBar: _buildNavigation(isLastStep: isLastStep, totalSteps: steps.length),
+      bottomNavigationBar:
+          _buildNavigation(isLastStep: isLastStep, totalSteps: steps.length),
     );
   }
 

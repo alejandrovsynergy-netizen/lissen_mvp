@@ -142,8 +142,7 @@ class _AuthScreenState extends State<AuthScreen> {
         return;
       }
 
-      final GoogleSignInAuthentication googleAuth =
-          await googleUser.authentication;
+      final GoogleSignInAuthentication googleAuth = await googleUser.authentication;
 
       final credential = GoogleAuthProvider.credential(
         accessToken: googleAuth.accessToken,
@@ -270,6 +269,7 @@ class _AuthScreenState extends State<AuthScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final cs = theme.colorScheme;
 
     return Scaffold(
       appBar: AppBar(
@@ -292,22 +292,22 @@ class _AuthScreenState extends State<AuthScreen> {
                     Icon(
                       Icons.mic_none,
                       size: 56,
-                      color: theme.colorScheme.primary,
+                      color: cs.primary,
                     ),
                     const SizedBox(height: 12),
-                    const Text(
+                    Text(
                       'Bienvenido a Lissen',
-                      style: TextStyle(
-                        fontSize: 22,
+                      style: theme.textTheme.headlineSmall?.copyWith(
                         fontWeight: FontWeight.w600,
                       ),
+                      textAlign: TextAlign.center,
                     ),
                     const SizedBox(height: 4),
                     Text(
                       'Conversaciones que sí valen la pena.',
                       textAlign: TextAlign.center,
                       style: theme.textTheme.bodySmall?.copyWith(
-                        color: Colors.grey,
+                        color: cs.onSurfaceVariant,
                       ),
                     ),
                   ],
@@ -328,7 +328,7 @@ class _AuthScreenState extends State<AuthScreen> {
                     Text(
                       'o usa tu correo',
                       style: theme.textTheme.bodySmall?.copyWith(
-                        color: Colors.grey,
+                        color: cs.onSurfaceVariant,
                       ),
                     ),
                     const SizedBox(width: 8),
@@ -345,7 +345,6 @@ class _AuthScreenState extends State<AuthScreen> {
                   enabled: !loading,
                   decoration: const InputDecoration(
                     labelText: 'Email',
-                    border: OutlineInputBorder(),
                   ),
                 ),
                 const SizedBox(height: 16),
@@ -355,7 +354,6 @@ class _AuthScreenState extends State<AuthScreen> {
                   enabled: !loading,
                   decoration: const InputDecoration(
                     labelText: 'Contraseña',
-                    border: OutlineInputBorder(),
                   ),
                 ),
 
@@ -364,7 +362,10 @@ class _AuthScreenState extends State<AuthScreen> {
                 if (errorText != null)
                   Text(
                     errorText!,
-                    style: const TextStyle(color: Colors.red, fontSize: 12),
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: cs.error,
+                      fontSize: 12,
+                    ),
                   ),
 
                 const SizedBox(height: 16),
@@ -372,9 +373,7 @@ class _AuthScreenState extends State<AuthScreen> {
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(
-                    onPressed: loading
-                        ? null
-                        : () => isLogin ? _login() : _register(),
+                    onPressed: loading ? null : () => isLogin ? _login() : _register(),
                     child: loading
                         ? const SizedBox(
                             height: 20,
@@ -398,9 +397,7 @@ class _AuthScreenState extends State<AuthScreen> {
                           });
                         },
                   child: Text(
-                    isLogin
-                        ? '¿No tienes cuenta? Crear cuenta'
-                        : '¿Ya tienes cuenta? Iniciar sesión',
+                    isLogin ? '¿No tienes cuenta? Crear cuenta' : '¿Ya tienes cuenta? Iniciar sesión',
                   ),
                 ),
 
@@ -411,7 +408,7 @@ class _AuthScreenState extends State<AuthScreen> {
                   'Lissen nunca comparte tus datos de acceso con otras personas.',
                   textAlign: TextAlign.center,
                   style: theme.textTheme.bodySmall?.copyWith(
-                    color: Colors.grey,
+                    color: cs.onSurfaceVariant,
                     fontSize: 11,
                   ),
                 ),
@@ -424,86 +421,43 @@ class _AuthScreenState extends State<AuthScreen> {
   }
 
   // ============================================================
-  // 🔵 BOTONES SOCIALES (UI) – estilo tipo captura
+  // 🔵 BOTONES SOCIALES (UI) – ahora dependen del tema (sin colores fijos)
   // ============================================================
   Widget _buildSocialButtons() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // Facebook (azul, texto blanco, pill)
-        GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: loading ? null : _handleFacebookBtn,
-          child: Opacity(
-            opacity: loading ? 0.6 : 1,
-            child: Container(
-              height: 48,
-              decoration: BoxDecoration(
-                color: const Color(0xFF1877F2),
-                borderRadius: BorderRadius.circular(24),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Container(
-                    width: 28,
-                    height: 28,
-                    decoration: const BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: Colors.white,
-                    ),
-                    child: const Icon(
-                      Icons.facebook,
-                      size: 18,
-                      color: Color(0xFF1877F2),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  const Text(
-                    'Continuar con Facebook',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ),
-            ),
+        OutlinedButton(
+          onPressed: loading ? null : _handleFacebookBtn,
+          style: OutlinedButton.styleFrom(
+            minimumSize: const Size.fromHeight(48),
+            shape: const StadiumBorder(),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: const [
+              Icon(Icons.facebook),
+              SizedBox(width: 12),
+              Text('Continuar con Facebook'),
+            ],
           ),
         ),
 
         const SizedBox(height: 12),
 
-        // Google (gris claro, texto negro, pill, G multicolor sin PNG)
-        GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: loading ? null : _handleGoogleBtn,
-          child: Opacity(
-            opacity: loading ? 0.6 : 1,
-            child: Container(
-              height: 48,
-              decoration: BoxDecoration(
-                color: const Color(0xFFF5F5F5),
-                borderRadius: BorderRadius.circular(24),
-                border: Border.all(color: Colors.grey),
-              ),
-              child: const Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  _GoogleLogoG(),
-                  SizedBox(width: 12),
-                  Text(
-                    'Continuar con Google',
-                    style: TextStyle(
-                      color: Colors.black87,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ),
-            ),
+        OutlinedButton(
+          onPressed: loading ? null : _handleGoogleBtn,
+          style: OutlinedButton.styleFrom(
+            minimumSize: const Size.fromHeight(48),
+            shape: const StadiumBorder(),
+          ),
+          child: const Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              _GoogleLogoG(),
+              SizedBox(width: 12),
+              Text('Continuar con Google'),
+            ],
           ),
         ),
       ],

@@ -7,8 +7,10 @@ import 'firebase_options.dart';
 import 'screens/auth_screen.dart';
 import 'screens/onboarding_screen.dart';
 import 'screens/lissen_home.dart';
-import 'features/sessions/ui/session_screen.dart'; // ⬅️ para SessionConversationScreen
-import 'screens/global_session_rating_listener.dart'; // ⬅️ listener global
+import 'features/sessions/ui/session_screen.dart';
+import 'screens/global_session_rating_listener.dart';
+
+import 'theme/chat_theme.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -21,18 +23,31 @@ class LissenApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    const bgGradient = LinearGradient(
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+      colors: [
+        Color(0xFF020617), // slate-950
+        Color(0xFF0B1B4D), // deep blue
+        Color(0xFF0F172A), // slate-900
+      ],
+    );
+
     return MaterialApp(
       debugShowCheckedModeBanner: false,
 
-      theme: ThemeData.light(),
+      // ✅ Tema (tuya)
+      theme: ChatTheme.dark(),
+      darkTheme: ChatTheme.dark(),
+      themeMode: ThemeMode.system,
 
-      // Tema oscuro sencillo (sin CardTheme para que no marque rojo)
-      darkTheme: ThemeData(
-        brightness: Brightness.dark,
-        scaffoldBackgroundColor: const Color(0xFF0D0E12),
-      ),
-
-      themeMode: ThemeMode.dark,
+      // ✅ Fondo global
+      builder: (context, child) {
+        return Container(
+          decoration: const BoxDecoration(gradient: bgGradient),
+          child: child ?? const SizedBox.shrink(),
+        );
+      },
 
       home: const _AuthGate(),
     );
@@ -63,9 +78,7 @@ class _AuthGate extends StatelessWidget {
           return const AuthScreen();
         }
 
-        // 🟢 Con usuario:
-        // aquí SÍ sabemos que FirebaseAuth.instance.currentUser != null
-        // así que montamos el listener global alrededor del root
+        // 🟢 Con usuario: montamos el listener global alrededor del root
         return GlobalSessionRatingListener(
           child: _RootController(userId: user.uid),
         );

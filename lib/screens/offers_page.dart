@@ -62,10 +62,15 @@ class _OffersPageState extends State<OffersPage> {
     required double? userLat,
     required double? userLng,
   }) {
-    final double? offerLat = (offerData['locationCenterLat'] as num?)?.toDouble();
-    final double? offerLng = (offerData['locationCenterLng'] as num?)?.toDouble();
+    final double? offerLat =
+        (offerData['locationCenterLat'] as num?)?.toDouble();
+    final double? offerLng =
+        (offerData['locationCenterLng'] as num?)?.toDouble();
 
-    if (userLat == null || userLng == null || offerLat == null || offerLng == null) {
+    if (userLat == null ||
+        userLng == null ||
+        offerLat == null ||
+        offerLng == null) {
       return null;
     }
     return distanceKm(userLat, userLng, offerLat, offerLng);
@@ -73,14 +78,32 @@ class _OffersPageState extends State<OffersPage> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+
+    // === Solo visual (como preview) ===
+    const emeraldA = Color(0xFF10B981);
+    const emeraldB = Color(0xFF059669);
+    final cyanGlow = const Color(0xFF22D3EE);
+
     final user = _user;
     if (user == null) {
-      return const Center(child: Text('Debes iniciar sesión.'));
+      return Center(
+        child: Text(
+          'Debes iniciar sesión.',
+          style: theme.textTheme.bodyMedium,
+        ),
+      );
     }
 
     final userStream = _userStream;
     if (userStream == null) {
-      return const Center(child: Text('No se encontró tu perfil.'));
+      return Center(
+        child: Text(
+          'No se encontró tu perfil.',
+          style: theme.textTheme.bodyMedium,
+        ),
+      );
     }
 
     return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
@@ -90,7 +113,12 @@ class _OffersPageState extends State<OffersPage> {
           return const Center(child: CircularProgressIndicator());
         }
         if (!userSnap.hasData || !userSnap.data!.exists) {
-          return const Center(child: Text('No se encontró tu perfil.'));
+          return Center(
+            child: Text(
+              'No se encontró tu perfil.',
+              style: theme.textTheme.bodyMedium,
+            ),
+          );
         }
 
         final userData = userSnap.data!.data() ?? {};
@@ -98,7 +126,8 @@ class _OffersPageState extends State<OffersPage> {
         final alias = (userData['alias'] as String?) ?? 'Usuario';
         final country = (userData['country'] as String?) ?? '';
         final city = (userData['city'] as String?) ?? '';
-        final companionCodeUser = (userData['companionCode'] ?? '').toString().trim();
+        final companionCodeUser =
+            (userData['companionCode'] ?? '').toString().trim();
 
         // género y geolocalización de la compañera
         final userGender = (userData['gender'] as String?)?.toLowerCase() ?? '';
@@ -115,7 +144,12 @@ class _OffersPageState extends State<OffersPage> {
               return const Center(child: CircularProgressIndicator());
             }
             if (!offerSnap.hasData) {
-              return const Center(child: Text('No se pudieron leer ofertas.'));
+              return Center(
+                child: Text(
+                  'No se pudieron leer ofertas.',
+                  style: theme.textTheme.bodyMedium,
+                ),
+              );
             }
 
             final allDocs = offerSnap.data!.docs;
@@ -139,13 +173,15 @@ class _OffersPageState extends State<OffersPage> {
               // ==============================
               // COMPAÑERA: filtros
               // ==============================
-              final List<QueryDocumentSnapshot<Map<String, dynamic>>> candidates = [];
+              final List<QueryDocumentSnapshot<Map<String, dynamic>>> candidates =
+                  [];
 
               for (final doc in allDocs) {
                 final data = doc.data();
                 final status = (data['status'] ?? 'active') as String;
                 final speakerId = (data['speakerId'] ?? '') as String;
-                final offerCompanionCode = (data['companionCode'] ?? '').toString().trim();
+                final offerCompanionCode =
+                    (data['companionCode'] ?? '').toString().trim();
 
                 // Estado y dueño
                 if (status != 'active') continue;
@@ -155,13 +191,15 @@ class _OffersPageState extends State<OffersPage> {
 
                 // Privacidad: pública vs privada con código
                 if (offerCompanionCode.isNotEmpty) {
-                  if (companionCodeUser.isEmpty || companionCodeUser != offerCompanionCode) {
+                  if (companionCodeUser.isEmpty ||
+                      companionCodeUser != offerCompanionCode) {
                     continue;
                   }
                 }
 
                 // Filtro de género objetivo
-                final targetGender = (data['targetGender'] ?? 'todos').toString().toLowerCase();
+                final targetGender =
+                    (data['targetGender'] ?? 'todos').toString().toLowerCase();
                 bool genderOk = true;
 
                 if (targetGender == 'hombre') {
@@ -240,23 +278,27 @@ class _OffersPageState extends State<OffersPage> {
               });
             }
 
-            final screenH = MediaQuery.of(context).size.height;
-
             return Scaffold(
+              // ✅ Solo visual: deja ver tu fondo global (NO lo cambio)
+              backgroundColor: Colors.transparent,
+
               floatingActionButton: isSpeaker
                   ? Padding(
                       padding: const EdgeInsets.only(bottom: 80),
-                      child: FloatingActionButton(
+                      child: _GradientFab(
                         onPressed: () {
                           if (_busy) return;
 
                           final hasActiveOffer = allDocs.any((d) {
                             final data = d.data();
-                            final speakerId = (data['speakerId'] ?? '').toString().trim();
-                            final status = (data['status'] ?? 'active').toString();
+                            final speakerId =
+                                (data['speakerId'] ?? '').toString().trim();
+                            final status =
+                                (data['status'] ?? 'active').toString();
 
                             if (speakerId != currentUserId) return false;
-                            return status == 'active' || status == 'pending_speaker';
+                            return status == 'active' ||
+                                status == 'pending_speaker';
                           });
 
                           if (hasActiveOffer) {
@@ -279,38 +321,79 @@ class _OffersPageState extends State<OffersPage> {
                             city: city,
                           );
                         },
-                        child: const Icon(Icons.add),
                       ),
                     )
                   : null,
+
               body: SafeArea(
                 child: isSpeaker
                     ? CustomScrollView(
                         slivers: [
+                          const SliverToBoxAdapter(child: SizedBox(height: 12)),
+
+                          // ===== Header tipo preview =====
                           SliverToBoxAdapter(
-                            child: SizedBox(height: screenH * 0.125),
-                          ),
-                          const SliverToBoxAdapter(
-                            child: Center(
-                              child: Text(
-                                'Mis ofertas',
-                                style: TextStyle(
-                                  fontSize: 22,
-                                  fontWeight: FontWeight.w800,
-                                ),
+                            child: Padding(
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 16),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  _GlowTitle(
+                                    text: 'Lissen',
+                                    glowColor: cyanGlow,
+                                  ),
+                                  const SizedBox(height: 14),
+                                  _SectionHeader(
+                                    icon: Icons.local_offer_outlined,
+                                    iconBg: emeraldA.withOpacity(0.12),
+                                    iconColor: emeraldA,
+                                    title: 'Mis ofertas',
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    'Crea una oferta y encuentra alguien con quien conversar.',
+                                    style: theme.textTheme.bodySmall?.copyWith(
+                                      color: cs.onBackground.withOpacity(0.70),
+                                      height: 1.25,
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
                           ),
-                          SliverToBoxAdapter(
-                            child: SizedBox(height: screenH * 0.12),
-                          ),
+
+                          const SliverToBoxAdapter(child: SizedBox(height: 14)),
+                          if (docs.isNotEmpty)
+                            SliverToBoxAdapter(
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(horizontal: 16),
+                                child: _InfoNote(
+                                  text:
+                                      'Importante: No se te cobrará nada si no hay conversación.\n'
+                                      'Si alguien toma tu oferta, te avisaremos para que puedas aceptar o rechazar antes de empezar.',
+                                ),
+                              ),
+                            ),
+
+                          if (docs.isNotEmpty)
+                            const SliverToBoxAdapter(child: SizedBox(height: 12)),
+
                           if (docs.isEmpty)
-                            const SliverFillRemaining(
+                            SliverFillRemaining(
                               hasScrollBody: false,
-                              child: Center(
-                                child: Text(
-                                  'Aún no tienes ofertas.\nCrea una para comenzar.',
-                                  textAlign: TextAlign.center,
+                              child: Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(horizontal: 16),
+                                child: Center(
+                                  child: _EmptyPanel(
+                                    text:
+                                        'Aquí aparecerán tus ofertas.\n\n'
+                                        'Crea una para que otras personas puedan encontrarte y pedirte conversar. '
+                                        'Solo se te cobrará si la conversación realmente sucede.\n\n'
+                                        'Cuando alguien tome tu oferta, te avisaremos para que puedas aceptar o rechazar.',
+                                    borderColor: cyanGlow.withOpacity(0.25),
+                                  ),
                                 ),
                               ),
                             )
@@ -322,164 +405,229 @@ class _OffersPageState extends State<OffersPage> {
                               ),
                               sliver: SliverList.separated(
                                 itemCount: docs.length,
-                                separatorBuilder: (_, __) => const SizedBox(height: 12),
+                                separatorBuilder: (_, __) =>
+                                    const SizedBox(height: 12),
                                 itemBuilder: (context, index) {
                                   final doc = docs[index];
                                   final data = doc.data();
-                                  final status = (data['status'] ?? 'active') as String;
+                                  final status =
+                                      (data['status'] ?? 'active') as String;
 
                                   final isPendingForSpeaker =
                                       status == 'pending_speaker' &&
-                                      (data['pendingSpeakerId'] ?? '') == currentUserId;
+                                          (data['pendingSpeakerId'] ?? '') ==
+                                              currentUserId;
 
                                   return Align(
                                     alignment: Alignment.topCenter,
                                     child: ConstrainedBox(
-                                      constraints: const BoxConstraints(maxWidth: 520),
-                                      child: OfferCard(
-                                        docId: doc.id,
-                                        data: data,
-                                        isSpeaker: true,
-                                        isPendingForSpeaker: isPendingForSpeaker,
-                                        currentUserId: currentUserId,
-                                        currentUserAlias: alias,
-                                        isProcessing: _busy && _processingOfferId == doc.id,
-                                        onTakeOffer: _handleCompanionTakeOffer,
-                                        onEdit: (offerId, offerData) {
-                                          _handleEditOffer(
-                                            offerId: offerId,
-                                            offerData: offerData,
-                                            userId: currentUserId,
-                                            alias: alias,
-                                            country: country,
-                                            city: city,
-                                          );
-                                        },
-                                        onDelete: (offerId) => _handleDeleteOffer(offerId),
-                                        onSpeakerPendingDecision: isPendingForSpeaker
-                                            ? (offerId, offerData) => _handleSpeakerPendingDecision(
-                                                  offerId: offerId,
-                                                  offerData: offerData,
-                                                )
-                                            : null,
+                                      constraints:
+                                          const BoxConstraints(maxWidth: 520),
+                                      child: _CardFrame(
+                                        borderColor: cyanGlow.withOpacity(0.22),
+                                        child: OfferCard(
+                                          docId: doc.id,
+                                          data: data,
+                                          isSpeaker: true,
+                                          isPendingForSpeaker:
+                                              isPendingForSpeaker,
+                                          currentUserId: currentUserId,
+                                          currentUserAlias: alias,
+                                          isProcessing: _busy &&
+                                              _processingOfferId == doc.id,
+                                          onTakeOffer:
+                                              _handleCompanionTakeOffer,
+                                          onEdit: (offerId, offerData) {
+                                            _handleEditOffer(
+                                              offerId: offerId,
+                                              offerData: offerData,
+                                              userId: currentUserId,
+                                              alias: alias,
+                                              country: country,
+                                              city: city,
+                                            );
+                                          },
+                                          onDelete: (offerId) =>
+                                              _handleDeleteOffer(offerId),
+                                          onSpeakerPendingDecision:
+                                              isPendingForSpeaker
+                                                  ? (offerId, offerData) =>
+                                                      _handleSpeakerPendingDecision(
+                                                        offerId: offerId,
+                                                        offerData: offerData,
+                                                      )
+                                                  : null,
+                                        ),
                                       ),
                                     ),
                                   );
                                 },
                               ),
                             ),
+                          const SliverToBoxAdapter(child: SizedBox(height: 24)),
                         ],
                       )
                     : CustomScrollView(
                         slivers: [
-                          const SliverToBoxAdapter(child: SizedBox(height: 28)),
-                          const SliverToBoxAdapter(
-                            child: Center(
-                              child: Text(
-                                'Ofertas disponibles',
-                                style: TextStyle(
-                                  fontSize: 22,
-                                  fontWeight: FontWeight.w800,
-                                ),
-                              ),
-                            ),
-                          ),
                           const SliverToBoxAdapter(child: SizedBox(height: 12)),
+
+                          // ===== Header tipo preview =====
                           SliverToBoxAdapter(
                             child: Padding(
-                              padding: const EdgeInsets.symmetric(horizontal: 16),
-                              child: Row(
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 16),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Expanded(
-                                    child: FilterDropdown(
-                                      label: 'Montos',
-                                      value: _amountSort,
-                                      items: const [
-                                        DropdownMenuItem(
-                                          value: 'high',
-                                          child: Text('Mayores primero'),
-                                        ),
-                                        DropdownMenuItem(
-                                          value: 'low',
-                                          child: Text('Menores primero'),
-                                        ),
-                                      ],
-                                      onChanged: (v) {
-                                        if (v == null) return;
-                                        setState(() => _amountSort = v);
-                                      },
-                                    ),
+                                  _GlowTitle(
+                                    text: 'Lissen',
+                                    glowColor: cyanGlow,
                                   ),
-                                  const SizedBox(width: 12),
-                                  Expanded(
-                                    child: FilterDropdown(
-                                      label: 'Cercanía',
-                                      value: _distanceSort,
-                                      items: const [
-                                        DropdownMenuItem(
-                                          value: 'near',
-                                          child: Text('Más cercanas primero'),
-                                        ),
-                                        DropdownMenuItem(
-                                          value: 'far',
-                                          child: Text('Más lejanas primero'),
-                                        ),
-                                      ],
-                                      onChanged: (v) {
-                                        if (v == null) return;
-                                        setState(() => _distanceSort = v);
-                                      },
-                                    ),
+                                  const SizedBox(height: 14),
+                                  _SectionHeader(
+                                    icon: Icons.explore_outlined,
+                                    iconBg: emeraldA.withOpacity(0.12),
+                                    iconColor: emeraldA,
+                                    title: 'Ofertas disponibles',
                                   ),
                                 ],
                               ),
                             ),
                           ),
+
                           const SliverToBoxAdapter(child: SizedBox(height: 12)),
+
+                          // ===== Filtros (mismo widget, solo enmarcado visual) =====
+                          SliverToBoxAdapter(
+                            child: Padding(
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 16),
+                              child: _CardFrame(
+                                borderColor: cyanGlow.withOpacity(0.18),
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 12, vertical: 10),
+                                  child: Row(
+                                    children: [
+                                      Expanded(
+                                        child: FilterDropdown(
+                                          label: 'Montos',
+                                          value: _amountSort,
+                                          items: const [
+                                            DropdownMenuItem(
+                                              value: 'high',
+                                              child: Text('Mayores primero'),
+                                            ),
+                                            DropdownMenuItem(
+                                              value: 'low',
+                                              child: Text('Menores primero'),
+                                            ),
+                                          ],
+                                          onChanged: (v) {
+                                            if (v == null) return;
+                                            setState(() => _amountSort = v);
+                                          },
+                                        ),
+                                      ),
+                                      const SizedBox(width: 12),
+                                      Expanded(
+                                        child: FilterDropdown(
+                                          label: 'Cercanía',
+                                          value: _distanceSort,
+                                          items: const [
+                                            DropdownMenuItem(
+                                              value: 'near',
+                                              child:
+                                                  Text('Más cercanas primero'),
+                                            ),
+                                            DropdownMenuItem(
+                                              value: 'far',
+                                              child:
+                                                  Text('Más lejanas primero'),
+                                            ),
+                                          ],
+                                          onChanged: (v) {
+                                            if (v == null) return;
+                                            setState(() => _distanceSort = v);
+                                          },
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+
+                          const SliverToBoxAdapter(child: SizedBox(height: 12)),
+
                           if (docs.isEmpty)
-                            const SliverFillRemaining(
+                            SliverFillRemaining(
                               hasScrollBody: false,
-                              child: Center(
-                                child: Text(
-                                  'No hay ofertas disponibles en este momento.',
-                                  textAlign: TextAlign.center,
+                              child: Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(horizontal: 16),
+                                child: Center(
+                                  child: _EmptyPanel(
+                                    text:
+                                        'No hay ofertas disponibles en este momento.',
+                                    borderColor: cyanGlow.withOpacity(0.25),
+                                  ),
                                 ),
                               ),
                             )
                           else
+                            SliverToBoxAdapter(
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(horizontal: 16),
+                                child: _InfoNote(
+                                  text:
+                                      'Importante: No se te cobrará nada si no hay conversación.\n'
+                                      'Si alguien toma tu oferta, recibirás una notificación para aceptar o rechazar antes de empezar.',
+                                ),
+                              ),
+                            ),
+                            const SliverToBoxAdapter(child: SizedBox(height: 12)),
                             SliverPadding(
-                              padding: const EdgeInsets.symmetric(horizontal: 16),
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 16),
                               sliver: SliverList.separated(
                                 itemCount: docs.length,
-                                separatorBuilder: (_, __) => const SizedBox(height: 12),
+                                separatorBuilder: (_, __) =>
+                                    const SizedBox(height: 12),
                                 itemBuilder: (context, index) {
                                   final doc = docs[index];
                                   final data = doc.data();
 
-                                  final isPendingForSpeaker = false;
-
                                   return Align(
                                     alignment: Alignment.topCenter,
                                     child: ConstrainedBox(
-                                      constraints: const BoxConstraints(maxWidth: 520),
-                                      child: OfferCard(
-                                        docId: doc.id,
-                                        data: data,
-                                        isSpeaker: false,
-                                        isPendingForSpeaker: isPendingForSpeaker,
-                                        currentUserId: currentUserId,
-                                        currentUserAlias: alias,
-                                        isProcessing: _busy && _processingOfferId == doc.id,
-                                        onTakeOffer: _handleCompanionTakeOffer,
-                                        onEdit: null,
-                                        onDelete: null,
-                                        onSpeakerPendingDecision: null,
+                                      constraints:
+                                          const BoxConstraints(maxWidth: 520),
+                                      child: _CardFrame(
+                                        borderColor: cyanGlow.withOpacity(0.22),
+                                        child: OfferCard(
+                                          docId: doc.id,
+                                          data: data,
+                                          isSpeaker: false,
+                                          isPendingForSpeaker: false,
+                                          currentUserId: currentUserId,
+                                          currentUserAlias: alias,
+                                          isProcessing: _busy &&
+                                              _processingOfferId == doc.id,
+                                          onTakeOffer:
+                                              _handleCompanionTakeOffer,
+                                          onEdit: null,
+                                          onDelete: null,
+                                          onSpeakerPendingDecision: null,
+                                        ),
                                       ),
                                     ),
                                   );
                                 },
                               ),
                             ),
+                          const SliverToBoxAdapter(child: SizedBox(height: 24)),
                         ],
                       ),
               ),
@@ -561,16 +709,21 @@ class _OffersPageState extends State<OffersPage> {
     });
 
     try {
-      final companionUserId = (offerData['pendingCompanionId'] ?? '').toString().trim();
+      final companionUserId =
+          (offerData['pendingCompanionId'] ?? '').toString().trim();
 
-      final companionAlias = (offerData['pendingCompanionAlias'] ?? 'Alguien').toString();
+      final companionAlias =
+          (offerData['pendingCompanionAlias'] ?? 'Alguien').toString();
       final durationMinutes =
           (offerData['durationMinutes'] ?? offerData['minMinutes'] ?? 30) as int;
       final int rawPriceCents =
-          (offerData['priceCents'] ?? offerData['totalMinAmountCents'] ?? 0) as int;
+          (offerData['priceCents'] ?? offerData['totalMinAmountCents'] ?? 0)
+              as int;
       final double amount = rawPriceCents <= 0 ? 0.0 : rawPriceCents / 100.0;
-      final currency = (offerData['currency'] ?? 'usd').toString().toUpperCase();
-      final communicationType = (offerData['communicationType'] ?? 'chat').toString();
+      final currency =
+          (offerData['currency'] ?? 'usd').toString().toUpperCase();
+      final communicationType =
+          (offerData['communicationType'] ?? 'chat').toString();
 
       final decision = await showIncomingCompanionDialog(
         context: context,
@@ -617,7 +770,8 @@ class _OffersPageState extends State<OffersPage> {
         if (sessionId == null || sessionId.isEmpty) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('No se pudo obtener la sesión creada, intenta de nuevo.'),
+              content:
+                  Text('No se pudo obtener la sesión creada, intenta de nuevo.'),
             ),
           );
           return;
@@ -662,13 +816,15 @@ class _OffersPageState extends State<OffersPage> {
       if (result == 'ok') {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Rechazaste la solicitud. La oferta volvió a estar disponible.'),
+            content: Text(
+                'Rechazaste la solicitud. La oferta volvió a estar disponible.'),
           ),
         );
       } else if (result == 'already_used') {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('La sesión ya se encuentra activa, no se puede rechazar.'),
+            content: Text(
+                'La sesión ya se encuentra activa, no se puede rechazar.'),
           ),
         );
       } else {
@@ -711,6 +867,9 @@ class _OffersPageState extends State<OffersPage> {
   Future<void> _handleDeleteOffer(String offerId) async {
     if (_busy) return;
 
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+
     final confirm = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
@@ -726,7 +885,10 @@ class _OffersPageState extends State<OffersPage> {
           ),
           TextButton(
             onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Eliminar', style: TextStyle(color: Colors.red)),
+            child: Text(
+              'Eliminar',
+              style: TextStyle(color: cs.error),
+            ),
           ),
         ],
       ),
@@ -764,3 +926,232 @@ class _OffersPageState extends State<OffersPage> {
     }
   }
 }
+
+// ============================================================================
+// SOLO VISUAL (helpers de UI). No tocan lógica.
+// ============================================================================
+
+class _GlowTitle extends StatelessWidget {
+  final String text;
+  final Color glowColor;
+
+  const _GlowTitle({required this.text, required this.glowColor});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return ShaderMask(
+      shaderCallback: (rect) => const LinearGradient(
+        colors: [
+          Color(0xFF22D3EE),
+          Color(0xFF60A5FA),
+          Color(0xFF22D3EE),
+        ],
+        begin: Alignment.centerLeft,
+        end: Alignment.centerRight,
+      ).createShader(rect),
+      child: Text(
+        text,
+        style: theme.textTheme.headlineSmall?.copyWith(
+          fontWeight: FontWeight.w900,
+          color: Colors.white,
+          shadows: [
+            Shadow(
+              color: glowColor.withOpacity(0.55),
+              blurRadius: 28,
+              offset: const Offset(0, 0),
+            ),
+            Shadow(
+              color: glowColor.withOpacity(0.35),
+              blurRadius: 44,
+              offset: const Offset(0, 0),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SectionHeader extends StatelessWidget {
+  final IconData icon;
+  final Color iconBg;
+  final Color iconColor;
+  final String title;
+
+  const _SectionHeader({
+    required this.icon,
+    required this.iconBg,
+    required this.iconColor,
+    required this.title,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+
+    return Row(
+      children: [
+        Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            color: iconBg,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: iconColor.withOpacity(0.20), width: 1),
+          ),
+          child: Icon(icon, color: iconColor, size: 22),
+        ),
+        const SizedBox(width: 12),
+        Text(
+          title,
+          style: theme.textTheme.titleLarge?.copyWith(
+            fontWeight: FontWeight.w900,
+            color: cs.onBackground,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _EmptyPanel extends StatelessWidget {
+  final String text;
+  final Color borderColor;
+
+  const _EmptyPanel({required this.text, required this.borderColor});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+      decoration: BoxDecoration(
+        color: cs.surface.withOpacity(0.55),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: borderColor, width: 1),
+      ),
+      child: Text(
+        text,
+        textAlign: TextAlign.center,
+        style: theme.textTheme.bodyMedium?.copyWith(
+          color: cs.onBackground.withOpacity(0.78),
+          height: 1.25,
+        ),
+      ),
+    );
+  }
+}
+
+class _CardFrame extends StatelessWidget {
+  final Widget child;
+  final Color borderColor;
+
+  const _CardFrame({required this.child, required this.borderColor});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: cs.surface.withOpacity(0.62),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: borderColor, width: 1),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.22),
+            blurRadius: 18,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: child,
+      ),
+    );
+  }
+}
+
+class _GradientFab extends StatelessWidget {
+  final VoidCallback onPressed;
+
+  const _GradientFab({required this.onPressed});
+
+  @override
+  Widget build(BuildContext context) {
+    const emeraldA = Color(0xFF10B981);
+    const emeraldB = Color(0xFF059669);
+
+    return FloatingActionButton(
+      onPressed: onPressed,
+      elevation: 0,
+      backgroundColor: Colors.transparent,
+      child: Container(
+        width: 56,
+        height: 56,
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [emeraldA, emeraldB],
+          ),
+          borderRadius: BorderRadius.circular(14),
+          boxShadow: [
+            BoxShadow(
+              color: emeraldA.withOpacity(0.35),
+              blurRadius: 22,
+              offset: const Offset(0, 12),
+            ),
+          ],
+        ),
+        child: const Icon(Icons.add, color: Colors.white),
+      ),
+    );
+  }
+}
+class _InfoNote extends StatelessWidget {
+  final String text;
+  const _InfoNote({required this.text});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+
+    const cyan = Color(0xFF22D3EE);
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: cs.surface.withOpacity(0.55),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: cyan.withOpacity(0.22), width: 1),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.info_outline, size: 18, color: cyan),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              text,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: cs.onBackground.withOpacity(0.80),
+                height: 1.25,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+

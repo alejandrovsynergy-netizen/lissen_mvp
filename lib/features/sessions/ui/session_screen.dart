@@ -7,6 +7,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
+import '../../payments/payments_api.dart';
 
 class SessionConversationScreen extends StatefulWidget {
   final String sessionId;
@@ -27,6 +28,8 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
 
   bool _sending = false;
   bool _finishing = false;
+  bool _captureOk = false;
+
 
   // Mínimo a cobrar cuando la que corta es la compañera
   static const int kMinBillingMinutes = 10;
@@ -427,6 +430,15 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
 
       await _sessionRef.update(updateData);
 
+      try {
+        await PaymentsApi().captureSessionPayment(sessionId: widget.sessionId);
+        _captureOk = true;
+      } catch (e) {
+        _captureOk = false;
+        debugPrint('Stripe capture fallo: $e');
+      }
+
+
       // Mezclamos los datos antiguos con los nuevos para actualizar la UI
       final mergedData = {...data, ...updateData};
 
@@ -437,16 +449,24 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
         });
 
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Sesión marcada como completada.')),
+          SnackBar(
+            content: Text(
+              _captureOk
+                  ? 'Sesión finalizada ✅ (cobro capturado)'
+                  : 'Sesión finalizada ✅ (cobro pendiente ⚠️)',
+            ),
+          ),
         );
+
       }
-    } catch (_) {
+    } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No se pudo finalizar la sesión.')),
+          SnackBar(content: Text('No se pudo finalizar la sesión: $e')),
         );
       }
-    } finally {
+    }
+ finally {
       if (mounted) setState(() => _finishing = false);
     }
   }

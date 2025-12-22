@@ -1,5 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
+import 'package:flutter_stripe/flutter_stripe.dart' as stripe;
+import 'package:url_launcher/url_launcher.dart';
+
+import 'package:lissen_mvp/features/payments/connect_api.dart';
 
 class MoneyActivityScreen extends StatefulWidget {
   final String uid;
@@ -13,6 +18,120 @@ class MoneyActivityScreen extends StatefulWidget {
 class _MoneyActivityScreenState extends State<MoneyActivityScreen> {
   // 0 = Métodos de pago (Stripe), 1 = Historial
   int _selectedTab = 0;
+
+  bool _busy = false;
+
+  void _snack(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  }
+
+  String _prettyFunctionsError(FirebaseFunctionsException e) {
+    final code = e.code;
+    final message = e.message ?? 'Sin mensaje';
+    final details = e.details;
+    if (details == null) return '[$code] $message';
+    return '[$code] $message • details: $details';
+  }
+
+  // ============================================================
+  // HABLANTE: configurar método de pago (PaymentSheet -> SetupIntent)
+  // ============================================================
+  Future<void> _setupSpeakerPaymentMethod() async {
+    if (_busy) return;
+    setState(() => _busy = true);
+
+    try {
+      final functions = FirebaseFunctions.instanceFor(region: 'us-central1');
+      final callable = functions.httpsCallable('payments_prepareSetupIntent');
+
+      final resp = await callable.call();
+      final raw = resp.data;
+
+      if (raw == null || raw is! Map) {
+        throw Exception('Respuesta inválida de payments_prepareSetupIntent.');
+      }
+
+      final data = Map<String, dynamic>.from(raw as Map);
+
+      final customerId = (data['customerId'] as String?)?.trim() ?? '';
+      final ephemeralKeySecret =
+          (data['ephemeralKeySecret'] as String?)?.trim() ?? '';
+      final setupIntentClientSecret =
+          (data['setupIntentClientSecret'] as String?)?.trim() ?? '';
+      final publishableKey = (data['publishableKey'] as String?)?.trim() ?? '';
+
+      if (customerId.isEmpty ||
+          ephemeralKeySecret.isEmpty ||
+          setupIntentClientSecret.isEmpty ||
+          publishableKey.isEmpty) {
+        throw Exception(
+          'Faltan datos de Stripe desde el backend. '
+          'customerId/ephemeralKey/setupIntent/publishableKey deben venir completos.',
+        );
+      }
+
+      // Configura Stripe (runtime)
+      stripe.Stripe.publishableKey = publishableKey;
+      await stripe.Stripe.instance.applySettings();
+
+      await stripe.Stripe.instance.initPaymentSheet(
+        paymentSheetParameters: stripe.SetupPaymentSheetParameters(
+          merchantDisplayName: 'Lissen',
+          customerId: customerId,
+          customerEphemeralKeySecret: ephemeralKeySecret,
+          setupIntentClientSecret: setupIntentClientSecret,
+          allowsDelayedPaymentMethods: false,
+        ),
+      );
+
+      await stripe.Stripe.instance.presentPaymentSheet();
+
+      // ✅ Finalizar y guardar PM en Firestore (brand/last4/id)
+      await functions.httpsCallable('payments_finalizeSetupIntent').call({
+        'setupIntentClientSecret': setupIntentClientSecret,
+      });
+
+      _snack('Tarjeta guardada ✅');
+    } on stripe.StripeException catch (e) {
+      final msg = e.error.localizedMessage ?? e.toString();
+      final lower = msg.toLowerCase();
+
+      // Si el usuario cerró/canceló, lo ignoramos
+      if (lower.contains('canceled') || lower.contains('cancelled')) {
+        // no snackbar
+      } else {
+        _snack('Stripe error: $msg');
+      }
+    } on FirebaseFunctionsException catch (e) {
+      _snack('Functions error: ${_prettyFunctionsError(e)}');
+    } catch (e) {
+      _snack('Error PaymentSheet: $e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  // ============================================================
+  // HABLANTE: borrar método de pago
+  // ============================================================
+  Future<void> _removeSpeakerPaymentMethod() async {
+    if (_busy) return;
+    setState(() => _busy = true);
+
+    try {
+      final functions = FirebaseFunctions.instanceFor(region: 'us-central1');
+      await functions.httpsCallable('payments_detachDefaultPaymentMethod').call();
+
+      _snack('Método de pago eliminado ✅');
+    } on FirebaseFunctionsException catch (e) {
+      _snack('Functions error: ${_prettyFunctionsError(e)}');
+    } catch (e) {
+      _snack('No se pudo eliminar: $e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -45,18 +164,16 @@ class _MoneyActivityScreenState extends State<MoneyActivityScreen> {
                   children: [
                     Expanded(
                       child: OutlinedButton(
-                        onPressed: () {
-                          setState(() => _selectedTab = 0);
-                        },
+                        onPressed:
+                            _busy ? null : () => setState(() => _selectedTab = 0),
                         child: const Text('Métodos de pago'),
                       ),
                     ),
                     const SizedBox(width: 8),
                     Expanded(
                       child: OutlinedButton(
-                        onPressed: () {
-                          setState(() => _selectedTab = 1);
-                        },
+                        onPressed:
+                            _busy ? null : () => setState(() => _selectedTab = 1),
                         child: const Text('Historial de pagos'),
                       ),
                     ),
@@ -64,6 +181,11 @@ class _MoneyActivityScreenState extends State<MoneyActivityScreen> {
                 ),
               ),
               const SizedBox(height: 8),
+              if (_busy)
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                  child: LinearProgressIndicator(minHeight: 2),
+                ),
               Expanded(
                 child: AnimatedSwitcher(
                   duration: const Duration(milliseconds: 200),
@@ -84,55 +206,77 @@ class _MoneyActivityScreenState extends State<MoneyActivityScreen> {
   }
 
   // ============================================================
-  // SECCIÓN "MÉTODOS DE PAGO" (estructura pensada para Stripe)
+  // SECCIÓN "MÉTODOS DE PAGO" (Stripe / Connect)
   // ============================================================
   Widget _buildStripeConfig(
     Map<String, dynamic> userData, {
     required bool isSpeaker,
     required bool isCompanion,
   }) {
-    // Estos campos se llenarán desde tu backend cuando Stripe esté integrado.
+    // ===== Hablanate (paga) =====
     final stripeCustomerId = (userData['stripeCustomerId'] as String?)?.trim();
-    final stripeAccountId = (userData['stripeAccountId'] as String?)?.trim();
     final chargesEnabled = userData['stripeChargesEnabled'] as bool?;
-    final payoutsEnabled = userData['stripePayoutsEnabled'] as bool?;
     final defaultPmBrand = (userData['stripeDefaultPmBrand'] as String?)?.trim();
     final defaultPmLast4 = (userData['stripeDefaultPmLast4'] as String?)?.trim();
+    final bool hasCard = defaultPmLast4 != null && defaultPmLast4.isNotEmpty;
 
-    String _statusPagosComoHablante() {
+    // ===== Compañera (cobra) =====
+    // Soporta ambos nombres por compat:
+    final connectId = ((userData['stripeConnectAccountId'] ??
+                userData['stripeAccountId']) ??
+            '')
+        .toString()
+        .trim();
+
+    final connectPayoutsEnabled = (userData['stripeConnectPayoutsEnabled'] ??
+            userData['stripePayoutsEnabled']) ==
+        true;
+
+    final connectDetailsSubmitted =
+        (userData['stripeConnectDetailsSubmitted'] ??
+                userData['stripeDetailsSubmitted']) ==
+            true;
+
+    final bool isConnected = connectId.isNotEmpty;
+
+    String statusPagosComoHablante() {
       if (stripeCustomerId == null || stripeCustomerId.isEmpty) {
         return 'Aún no tienes un método de pago registrado.';
       }
       final enabledText =
           chargesEnabled == true ? 'Cobros habilitados' : 'Cobros pendientes';
-      if (defaultPmBrand != null && defaultPmLast4 != null) {
+
+      if (defaultPmBrand != null &&
+          defaultPmBrand.isNotEmpty &&
+          defaultPmLast4 != null &&
+          defaultPmLast4.isNotEmpty) {
         return '$enabledText • $defaultPmBrand • **** $defaultPmLast4';
       }
       return enabledText;
     }
 
-    String _statusCobrosComoCompanera() {
-      if (stripeAccountId == null || stripeAccountId.isEmpty) {
-        return 'Aún no tienes una cuenta de cobro conectada.';
+    String statusCobrosComoCompanera() {
+      if (!isConnected) return 'Aún no tienes una cuenta de cobro conectada.';
+      if (connectPayoutsEnabled && connectDetailsSubmitted) {
+        return '✅ Cuenta conectada y lista para recibir dinero.';
       }
-      final payoutsText =
-          payoutsEnabled == true ? 'Retiros habilitados' : 'Retiros pendientes';
-      return '$payoutsText • Cuenta conectada: $stripeAccountId';
+      return '⚠️ Cuenta conectada, pero falta completar/verificar datos en Stripe.';
     }
 
     final bool noRoleDefined = !isSpeaker && !isCompanion;
 
     final List<Widget> children = [
+      const SizedBox(height: 6),
       const Text(
-        'Desde aquí vas a manejar tus cobros y pagos reales. '
-        'Cuando conectemos Stripe, esta pantalla usará estos mismos bloques '
-        'para mostrar tu información actualizada.',
+        'Aquí administras pagos (hablante) y cobros (compañera).',
         style: TextStyle(fontSize: 14),
       ),
       const SizedBox(height: 16),
     ];
 
+    // ============================================================
     // PAGOS COMO HABLANTE
+    // ============================================================
     if (isSpeaker || noRoleDefined) {
       children.addAll([
         const Text(
@@ -160,33 +304,35 @@ class _MoneyActivityScreenState extends State<MoneyActivityScreen> {
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        stripeCustomerId == null || stripeCustomerId.isEmpty
-                            ? 'Sin tarjeta guardada.'
-                            : _statusPagosComoHablante(),
+                        hasCard ? statusPagosComoHablante() : 'Sin tarjeta guardada.',
                         style: const TextStyle(fontSize: 13),
                       ),
                     ),
                   ],
                 ),
                 const SizedBox(height: 12),
+
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(
-                    onPressed: () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text(
-                            'La conexión con Stripe se activará en una etapa posterior.',
-                          ),
-                        ),
-                      );
-                    },
+                    onPressed: _busy ? null : _setupSpeakerPaymentMethod,
                     child: const Text(
                       'Configurar método de pago',
                       style: TextStyle(fontSize: 14),
                     ),
                   ),
                 ),
+
+                if (hasCard) ...[
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton(
+                      onPressed: _busy ? null : _removeSpeakerPaymentMethod,
+                      child: const Text('Remover método de pago'),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -195,7 +341,9 @@ class _MoneyActivityScreenState extends State<MoneyActivityScreen> {
       ]);
     }
 
-    // COBROS COMO COMPAÑERA
+    // ============================================================
+    // COBROS COMO COMPAÑERA (STRIPE CONNECT)
+    // ============================================================
     if (isCompanion || noRoleDefined) {
       children.addAll([
         const Text(
@@ -223,31 +371,105 @@ class _MoneyActivityScreenState extends State<MoneyActivityScreen> {
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        _statusCobrosComoCompanera(),
+                        statusCobrosComoCompanera(),
                         style: const TextStyle(fontSize: 13),
                       ),
                     ),
                   ],
                 ),
+
+                if (isConnected) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    'Connect ID: $connectId',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.white.withOpacity(0.70),
+                    ),
+                  ),
+                ],
+
                 const SizedBox(height: 12),
+
+                // Botón principal: Conectar / Verificar
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(
-                    onPressed: () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text(
-                            'La conexión de cuenta para recibir dinero se activará cuando Stripe esté integrado.',
-                          ),
-                        ),
-                      );
-                    },
-                    child: const Text(
-                      'Conectar cuenta para recibir dinero',
-                      style: TextStyle(fontSize: 14),
+                    onPressed: _busy
+                        ? null
+                        : () async {
+                            setState(() => _busy = true);
+                            try {
+                              final api = ConnectApi();
+
+                              if (!isConnected) {
+                                final url = await api.createOnboardingLink(
+                                  returnUrl:
+                                      'https://lissen-mvp.web.app/stripe-return',
+                                  refreshUrl:
+                                      'https://lissen-mvp.web.app/stripe-refresh',
+                                );
+
+                                final ok = await launchUrl(
+                                  Uri.parse(url),
+                                  mode: LaunchMode.externalApplication,
+                                );
+                                if (!ok) {
+                                  throw Exception('No se pudo abrir el navegador.');
+                                }
+
+                                _snack(
+                                    'Completa Stripe Connect en el navegador y regresa a la app.');
+                              } else {
+                                await api.getAccountStatus();
+                                _snack('Estado actualizado ✅');
+                              }
+                            } catch (e) {
+                              _snack('Stripe Connect: $e');
+                            } finally {
+                              if (mounted) setState(() => _busy = false);
+                            }
+                          },
+                    child: Text(
+                      isConnected
+                          ? 'Verificar estado de cuenta'
+                          : 'Conectar cuenta para recibir dinero',
+                      style: const TextStyle(fontSize: 14),
                     ),
                   ),
                 ),
+
+                // ✅ Botón secundario: Abrir panel Express
+                if (isConnected) ...[
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton(
+                      onPressed: _busy
+                          ? null
+                          : () async {
+                              setState(() => _busy = true);
+                              try {
+                                final api = ConnectApi();
+                                final url = await api.createExpressLoginLink();
+
+                                final ok = await launchUrl(
+                                  Uri.parse(url),
+                                  mode: LaunchMode.externalApplication,
+                                );
+                                if (!ok) {
+                                  throw Exception('No se pudo abrir el navegador.');
+                                }
+                              } catch (e) {
+                                _snack('No se pudo abrir el panel: $e');
+                              } finally {
+                                if (mounted) setState(() => _busy = false);
+                              }
+                            },
+                      child: const Text('Abrir panel de Stripe'),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -255,14 +477,6 @@ class _MoneyActivityScreenState extends State<MoneyActivityScreen> {
         const SizedBox(height: 20),
       ]);
     }
-
-    children.add(
-      const Text(
-        'Cuando Stripe esté listo, estos mismos botones abrirán las pantallas '
-        'oficiales para agregar tu tarjeta o conectar tu cuenta bancaria.',
-        style: TextStyle(fontSize: 12),
-      ),
-    );
 
     return ListView(
       key: const ValueKey('metodos_pago'),

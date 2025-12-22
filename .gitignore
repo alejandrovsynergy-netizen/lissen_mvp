@@ -27,3 +27,7 @@ flutter
 flutter_*.log
 flutter_*.png
 
+
+# --- restore point ignores ---
+.firebase/
+*.zip

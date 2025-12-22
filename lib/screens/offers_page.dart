@@ -12,6 +12,9 @@ import '../features/offers/data/offers_service.dart';
 import '../features/offers/ui/widgets/filter_dropdown.dart';
 import '../features/offers/ui/widgets/offer_card.dart';
 import '../features/offers/ui/utils/offers_utils.dart';
+import 'package:cloud_functions/cloud_functions.dart';
+import '../features/payments/payments_api.dart';
+
 
 class OffersPage extends StatefulWidget {
   const OffersPage({super.key});
@@ -756,42 +759,186 @@ class _OffersPageState extends State<OffersPage> {
     final uid = currentUser.uid;
 
     try {
-      final result = await OffersService().acceptPendingCompanion(
-        offerId: offerId,
-        speakerUid: uid,
-      );
+      // 1) Generamos un sessionId, pero NO creamos sesión todavía.
+      final sessionsRef = FirebaseFirestore.instance.collection('sessions');
+      final newSessionId = sessionsRef.doc().id;
+
+      // 2) HOLD sí o sí. Si falla -> NO se crea sesión.
+      Map<String, dynamic> hold;
+      try {
+        hold = await PaymentsApi().authorizeOfferHold(
+          offerId: offerId,
+          sessionId: newSessionId,
+        );
+      } catch (e) {
+        // Revertimos la oferta a activa para liberar a la compañera.
+        await FirebaseFirestore.instance.runTransaction<void>((tx) async {
+          final offerRef =
+              FirebaseFirestore.instance.collection('offers').doc(offerId);
+          final snap = await tx.get(offerRef);
+          if (!snap.exists) return;
+
+          final data = snap.data() as Map<String, dynamic>;
+          final status = (data['status'] ?? 'active') as String;
+          final speakerId = (data['speakerId'] ?? '') as String;
+          final pendingCompanionId =
+              (data['pendingCompanionId'] ?? '') as String?;
+          final lastSessionId = (data['lastSessionId'] ?? '') as String?;
+
+          if (status == 'pending_speaker' &&
+              speakerId == uid &&
+              (lastSessionId == null || lastSessionId.isEmpty) &&
+              pendingCompanionId != null &&
+              pendingCompanionId.isNotEmpty) {
+            tx.update(offerRef, {
+              'status': 'active',
+              'pendingSpeakerId': FieldValue.delete(),
+              'pendingCompanionId': FieldValue.delete(),
+              'pendingCompanionAlias': FieldValue.delete(),
+              'pendingSince': FieldValue.delete(),
+              'holdFailedBySpeakerId': uid,
+              'holdFailedAt': FieldValue.serverTimestamp(),
+              'updatedAt': FieldValue.serverTimestamp(),
+            });
+          }
+        });
+
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'No se pudo autorizar el monto (HOLD).\n'
+              'No se creó la sesión.\n$e',
+            ),
+          ),
+        );
+        return;
+      }
+
+      if (hold['alreadyUsed'] == true) {
+        final existing = (hold['sessionId'] ?? '').toString().trim();
+        if (existing.isNotEmpty && mounted) {
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => SessionConversationScreen(sessionId: existing),
+            ),
+          );
+        }
+        return;
+      }
+
+      final reservedSessionId =
+          (hold['reservedSessionId'] ?? newSessionId).toString().trim();
+      final paymentIntentId = (hold['paymentIntentId'] ?? '').toString().trim();
+      final paymentIntentStatus = (hold['status'] ?? '').toString().trim();
+      final holdAmountCents = hold['holdAmountCents'];
+      final holdCurrency = (hold['holdCurrency'] ?? '').toString().trim();
+
+      if (reservedSessionId.isEmpty || paymentIntentId.isEmpty) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Hold inválido: faltan datos (paymentIntent/sessionId).'),
+          ),
+        );
+        return;
+      }
+
+      final created = await FirebaseFirestore.instance
+          .runTransaction<Map<String, dynamic>>((tx) async {
+        final offerRef =
+            FirebaseFirestore.instance.collection('offers').doc(offerId);
+        final offerSnap = await tx.get(offerRef);
+        if (!offerSnap.exists) return {'result': 'not_exists'};
+
+        final data = offerSnap.data() as Map<String, dynamic>;
+        final status = (data['status'] ?? 'active') as String;
+        final speakerId = (data['speakerId'] ?? '') as String;
+        final pendingCompanionId =
+            (data['pendingCompanionId'] ?? '') as String?;
+        final lastSessionId = (data['lastSessionId'] ?? '') as String?;
+
+        if (status == 'used' && lastSessionId != null && lastSessionId.isNotEmpty) {
+          return {'result': 'already_used', 'sessionId': lastSessionId};
+        }
+
+        if (status == 'pending_speaker' &&
+            speakerId == uid &&
+            pendingCompanionId != null &&
+            pendingCompanionId.isNotEmpty &&
+            (lastSessionId == null || lastSessionId.isEmpty)) {
+          final newSessionRef = sessionsRef.doc(reservedSessionId);
+
+          final speakerAlias = (data['speakerAlias'] ?? 'Hablante').toString();
+          final companionAlias =
+              (data['pendingCompanionAlias'] ?? 'Compañera').toString();
+
+          final dynamic dm = data['durationMinutes'] ?? data['minMinutes'] ?? 30;
+          final int durationMinutes = dm is int ? dm : int.tryParse(dm.toString()) ?? 30;
+
+          final dynamic pc = data['priceCents'] ?? data['totalMinAmountCents'] ?? 0;
+          final int rawPriceCents = pc is int ? pc : int.tryParse(pc.toString()) ?? 0;
+
+          final communicationType =
+              (data['communicationType'] ?? 'chat').toString();
+          final currency = (data['currency'] ?? 'mxn').toString();
+
+          tx.set(newSessionRef, {
+            'speakerId': speakerId,
+            'companionId': pendingCompanionId,
+            'speakerAlias': speakerAlias,
+            'companionAlias': companionAlias,
+            'offerId': offerId,
+            'status': 'active',
+            'createdAt': FieldValue.serverTimestamp(),
+            'updatedAt': FieldValue.serverTimestamp(),
+            'durationMinutes': durationMinutes,
+            'communicationType': communicationType,
+            'currency': currency,
+            'priceCents': rawPriceCents,
+            'participants': [speakerId, pendingCompanionId],
+
+            // ✅ Stripe hold
+            'paymentIntentId': paymentIntentId,
+            'paymentIntentStatus': paymentIntentStatus,
+            'holdAmountCents': holdAmountCents ?? rawPriceCents,
+            'holdCurrency': holdCurrency.isNotEmpty ? holdCurrency : currency,
+            'holdAuthorizedAt': FieldValue.serverTimestamp(),
+          });
+
+          tx.update(offerRef, {
+            'status': 'used',
+            'lastSessionId': reservedSessionId,
+            'pendingSpeakerId': FieldValue.delete(),
+            'pendingCompanionId': FieldValue.delete(),
+            'pendingCompanionAlias': FieldValue.delete(),
+            'pendingSince': FieldValue.delete(),
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+
+          return {'result': 'ok', 'sessionId': reservedSessionId};
+        }
+
+        return {'result': 'not_pending'};
+      });
 
       if (!mounted) return;
-
-      final res = result['result'] as String;
-
+      final res = created['result'] as String;
       if (res == 'ok' || res == 'already_used') {
-        final sessionId = result['sessionId'] as String?;
-        if (sessionId == null || sessionId.isEmpty) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content:
-                  Text('No se pudo obtener la sesión creada, intenta de nuevo.'),
+        final sessionId = (created['sessionId'] ?? '').toString().trim();
+        if (sessionId.isNotEmpty) {
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => SessionConversationScreen(sessionId: sessionId),
             ),
           );
           return;
         }
-
-        Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (_) => SessionConversationScreen(sessionId: sessionId),
-          ),
-        );
-      } else if (res == 'not_pending' || res == 'not_exists') {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'La solicitud ya no está disponible.\n'
-              'Es probable que la compañera haya cancelado o se acabó el tiempo.',
-            ),
-          ),
-        );
       }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('La solicitud ya no está disponible.')),
+      );
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(

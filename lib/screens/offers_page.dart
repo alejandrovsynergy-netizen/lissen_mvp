@@ -15,6 +15,7 @@ import '../features/offers/ui/utils/offers_utils.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import '../features/payments/payments_api.dart';
 
+import 'profile/money_activity_screen.dart';
 
 class OffersPage extends StatefulWidget {
   const OffersPage({super.key});
@@ -26,6 +27,9 @@ class OffersPage extends StatefulWidget {
 class _OffersPageState extends State<OffersPage> {
   bool _busy = false;
   String? _processingOfferId;
+
+  // ✅ bandera para evitar loop de autopublicación
+  bool _autoPublishingPaymentOffers = false;
 
   // ============================
   // Streams estabilizados
@@ -56,10 +60,44 @@ class _OffersPageState extends State<OffersPage> {
     _offersStream = FirebaseFirestore.instance.collection('offers').snapshots();
   }
 
+  Future<void> _openMoneyActivity(String uid) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => MoneyActivityScreen(uid: uid)),
+    );
+  }
+
+  // ✅ Autopublicar ofertas bloqueadas cuando ya hay tarjeta guardada
+  Future<void> _autoPublishPaymentRequiredOffers({
+    required List<String> offerIds,
+  }) async {
+    if (_autoPublishingPaymentOffers) return;
+
+    setState(() => _autoPublishingPaymentOffers = true);
+
+    try {
+      final db = FirebaseFirestore.instance;
+      final batch = db.batch();
+
+      for (final id in offerIds) {
+        batch.update(db.collection('offers').doc(id), {
+          'status': 'active',
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      }
+
+      await batch.commit();
+    } catch (_) {
+      // Si falla, no truena la app.
+    } finally {
+      if (mounted) {
+        setState(() => _autoPublishingPaymentOffers = false);
+      }
+    }
+  }
+
   // ============================
   // Cálculo de distancia en km
   // ============================
-
   double? _offerDistanceForDoc({
     required Map<String, dynamic> offerData,
     required double? userLat,
@@ -140,6 +178,13 @@ class _OffersPageState extends State<OffersPage> {
         final isSpeaker = role == 'speaker';
         final currentUserId = user.uid;
 
+        // ✅ Variables de método de pago (para panel + autopublish)
+        final defaultPmBrand =
+            (userData['stripeDefaultPmBrand'] as String?)?.trim() ?? '';
+        final defaultPmLast4 =
+            (userData['stripeDefaultPmLast4'] as String?)?.trim() ?? '';
+        final hasSavedCard = defaultPmLast4.isNotEmpty;
+
         return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
           stream: _offersStream, // ✅ stream estable
           builder: (context, offerSnap) {
@@ -163,14 +208,16 @@ class _OffersPageState extends State<OffersPage> {
             List<QueryDocumentSnapshot<Map<String, dynamic>>> docs;
 
             if (isSpeaker) {
-              // Hablante: solo SUS ofertas activas o pendientes
+              // Hablante: solo SUS ofertas activas o pendientes o bloqueadas por pago
               docs = allDocs.where((doc) {
                 final data = doc.data();
-                final status = (data['status'] ?? 'active') as String;
-                final speakerId = (data['speakerId'] ?? '') as String;
+                final status = (data['status'] ?? 'active').toString();
+                final speakerId = (data['speakerId'] ?? '').toString();
 
                 if (speakerId != currentUserId) return false;
-                return status == 'active' || status == 'pending_speaker';
+                return status == 'active' ||
+                    status == 'pending_speaker' ||
+                    status == 'payment_required';
               }).toList();
             } else {
               // ==============================
@@ -181,8 +228,8 @@ class _OffersPageState extends State<OffersPage> {
 
               for (final doc in allDocs) {
                 final data = doc.data();
-                final status = (data['status'] ?? 'active') as String;
-                final speakerId = (data['speakerId'] ?? '') as String;
+                final status = (data['status'] ?? 'active').toString();
+                final speakerId = (data['speakerId'] ?? '').toString();
                 final offerCompanionCode =
                     (data['companionCode'] ?? '').toString().trim();
 
@@ -281,6 +328,22 @@ class _OffersPageState extends State<OffersPage> {
               });
             }
 
+            // ✅ Autopublicar si ya hay tarjeta guardada
+            if (isSpeaker && hasSavedCard) {
+              final ids = docs
+                  .where((d) =>
+                      (d.data()['status'] ?? 'active').toString() ==
+                      'payment_required')
+                  .map((d) => d.id)
+                  .toList();
+
+              if (ids.isNotEmpty && !_autoPublishingPaymentOffers) {
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  _autoPublishPaymentRequiredOffers(offerIds: ids);
+                });
+              }
+            }
+
             return Scaffold(
               // ✅ Solo visual: deja ver tu fondo global (NO lo cambio)
               backgroundColor: Colors.transparent,
@@ -301,7 +364,8 @@ class _OffersPageState extends State<OffersPage> {
 
                             if (speakerId != currentUserId) return false;
                             return status == 'active' ||
-                                status == 'pending_speaker';
+                                status == 'pending_speaker' ||
+                                status == 'payment_required';
                           });
 
                           if (hasActiveOffer) {
@@ -367,10 +431,22 @@ class _OffersPageState extends State<OffersPage> {
                           ),
 
                           const SliverToBoxAdapter(child: SizedBox(height: 14)),
-                          if (docs.isNotEmpty)
+
+                          // ✅ Panel método de pago (envuelto en SliverToBoxAdapter)
+                          SliverToBoxAdapter(
+                            child: _PaymentMethodPanel(
+                              hasSavedCard: hasSavedCard,
+                              brand: defaultPmBrand,
+                              last4: defaultPmLast4,
+                              onManage: () => _openMoneyActivity(currentUserId),
+                            ),
+                          ),
+
+                          if (docs.isNotEmpty) ...[
                             SliverToBoxAdapter(
                               child: Padding(
-                                padding: const EdgeInsets.symmetric(horizontal: 16),
+                                padding:
+                                    const EdgeInsets.symmetric(horizontal: 16),
                                 child: _InfoNote(
                                   text:
                                       'Importante: No se te cobrará nada si no hay conversación.\n'
@@ -378,9 +454,9 @@ class _OffersPageState extends State<OffersPage> {
                                 ),
                               ),
                             ),
-
-                          if (docs.isNotEmpty)
-                            const SliverToBoxAdapter(child: SizedBox(height: 12)),
+                            const SliverToBoxAdapter(
+                                child: SizedBox(height: 12)),
+                          ],
 
                           if (docs.isEmpty)
                             SliverFillRemaining(
@@ -414,7 +490,7 @@ class _OffersPageState extends State<OffersPage> {
                                   final doc = docs[index];
                                   final data = doc.data();
                                   final status =
-                                      (data['status'] ?? 'active') as String;
+                                      (data['status'] ?? 'active').toString();
 
                                   final isPendingForSpeaker =
                                       status == 'pending_speaker' &&
@@ -467,6 +543,7 @@ class _OffersPageState extends State<OffersPage> {
                                 },
                               ),
                             ),
+
                           const SliverToBoxAdapter(child: SizedBox(height: 24)),
                         ],
                       )
@@ -579,10 +656,11 @@ class _OffersPageState extends State<OffersPage> {
                                 ),
                               ),
                             )
-                          else
+                          else ...[
                             SliverToBoxAdapter(
                               child: Padding(
-                                padding: const EdgeInsets.symmetric(horizontal: 16),
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 16),
                                 child: _InfoNote(
                                   text:
                                       'Importante: No se te cobrará nada si no hay conversación.\n'
@@ -590,7 +668,8 @@ class _OffersPageState extends State<OffersPage> {
                                 ),
                               ),
                             ),
-                            const SliverToBoxAdapter(child: SizedBox(height: 12)),
+                            const SliverToBoxAdapter(
+                                child: SizedBox(height: 12)),
                             SliverPadding(
                               padding:
                                   const EdgeInsets.symmetric(horizontal: 16),
@@ -630,6 +709,8 @@ class _OffersPageState extends State<OffersPage> {
                                 },
                               ),
                             ),
+                          ],
+
                           const SliverToBoxAdapter(child: SizedBox(height: 24)),
                         ],
                       ),
@@ -838,7 +919,8 @@ class _OffersPageState extends State<OffersPage> {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Hold inválido: faltan datos (paymentIntent/sessionId).'),
+            content:
+                Text('Hold inválido: faltan datos (paymentIntent/sessionId).'),
           ),
         );
         return;
@@ -858,7 +940,9 @@ class _OffersPageState extends State<OffersPage> {
             (data['pendingCompanionId'] ?? '') as String?;
         final lastSessionId = (data['lastSessionId'] ?? '') as String?;
 
-        if (status == 'used' && lastSessionId != null && lastSessionId.isNotEmpty) {
+        if (status == 'used' &&
+            lastSessionId != null &&
+            lastSessionId.isNotEmpty) {
           return {'result': 'already_used', 'sessionId': lastSessionId};
         }
 
@@ -874,10 +958,13 @@ class _OffersPageState extends State<OffersPage> {
               (data['pendingCompanionAlias'] ?? 'Compañera').toString();
 
           final dynamic dm = data['durationMinutes'] ?? data['minMinutes'] ?? 30;
-          final int durationMinutes = dm is int ? dm : int.tryParse(dm.toString()) ?? 30;
+          final int durationMinutes =
+              dm is int ? dm : int.tryParse(dm.toString()) ?? 30;
 
-          final dynamic pc = data['priceCents'] ?? data['totalMinAmountCents'] ?? 0;
-          final int rawPriceCents = pc is int ? pc : int.tryParse(pc.toString()) ?? 0;
+          final dynamic pc =
+              data['priceCents'] ?? data['totalMinAmountCents'] ?? 0;
+          final int rawPriceCents =
+              pc is int ? pc : int.tryParse(pc.toString()) ?? 0;
 
           final communicationType =
               (data['communicationType'] ?? 'chat').toString();
@@ -970,8 +1057,8 @@ class _OffersPageState extends State<OffersPage> {
       } else if (result == 'already_used') {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text(
-                'La sesión ya se encuentra activa, no se puede rechazar.'),
+            content:
+                Text('La sesión ya se encuentra activa, no se puede rechazar.'),
           ),
         );
       } else {
@@ -1263,6 +1350,7 @@ class _GradientFab extends StatelessWidget {
     );
   }
 }
+
 class _InfoNote extends StatelessWidget {
   final String text;
   const _InfoNote({required this.text});
@@ -1302,3 +1390,71 @@ class _InfoNote extends StatelessWidget {
   }
 }
 
+class _PaymentMethodPanel extends StatelessWidget {
+  final bool hasSavedCard;
+  final String brand;
+  final String last4;
+  final VoidCallback onManage;
+
+  const _PaymentMethodPanel({
+    required this.hasSavedCard,
+    required this.brand,
+    required this.last4,
+    required this.onManage,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+
+    final title = hasSavedCard ? 'Método de pago listo ✅' : 'Falta método de pago';
+    final subtitle = hasSavedCard
+        ? (brand.isNotEmpty && last4.isNotEmpty
+            ? '$brand • **** $last4'
+            : 'Tarjeta guardada')
+        : 'Guarda un método de pago para poder publicar ofertas.';
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            hasSavedCard ? Icons.credit_card : Icons.warning_amber_rounded,
+            color: hasSavedCard ? cs.primary : Colors.redAccent,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w900,
+                    color: cs.onSurface,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  subtitle,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: cs.onBackground.withOpacity(0.75),
+                    height: 1.2,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          TextButton(
+            onPressed: onManage,
+            child: Text(hasSavedCard ? 'Administrar' : 'Guardar'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+  

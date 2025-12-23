@@ -30,12 +30,8 @@ class _LissenHomeState extends State<LissenHome> {
   // ============================
   // PESTAÑAS PRINCIPALES
   // ============================
-  final List<Widget> _pages = [
-    HomeTab(), // 0: Inicio
-    const OffersPage(), // 1: Ofertas
-    const ExploreProfilesScreen(), // 2: Explorar
-    const ProfilePage(), // 3: Perfil
-  ];
+  late final List<Widget> _pages;
+
 
   // ============================
   // AUDIO + VIBRACIÓN TIPO LLAMADA
@@ -67,6 +63,12 @@ class _LissenHomeState extends State<LissenHome> {
   @override
   void initState() {
     super.initState();
+    _pages = [
+      HomeTab(onGoToOffersTab: () => setState(() => _index = 1)),
+      const OffersPage(),
+      const ExploreProfilesScreen(),
+      const ProfilePage(),
+    ];
 
     _incomingPlayer = AudioPlayer();
 

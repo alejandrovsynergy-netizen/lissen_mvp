@@ -141,11 +141,16 @@ class OfferCard extends StatelessWidget {
     final location = [city, country].where((e) => e.isNotEmpty).join(', ');
 
     final canTake = !isSpeaker && !isProcessing;
+    final status = (data['status'] ?? 'active').toString();
+    final isPaymentRequired = isSpeaker && status == 'payment_required';
+
 
     // ✅ Contraste: borde + fondo de card (sin Colors.grey hardcodeado)
-    final borderColor = isPendingForSpeaker
-        ? cs.primary.withOpacity(0.55)
-        : cyan.withOpacity(0.22);
+    final borderColor = isPaymentRequired
+        ? Colors.redAccent.withOpacity(0.65)
+        : isPendingForSpeaker
+            ? cs.primary.withOpacity(0.55)
+            : cyan.withOpacity(0.22);
 
     // Fondo tipo glass / night
     final cardFill = cs.surface.withOpacity(0.62);
@@ -289,6 +294,25 @@ class OfferCard extends StatelessWidget {
                       color: cs.onSurface,
                     ),
                   ),
+                  if (isPaymentRequired) ...[
+                    const SizedBox(height: 8),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: Colors.redAccent.withOpacity(0.10),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.redAccent.withOpacity(0.35)),
+                      ),
+                      child: Text(
+                        'Necesitas ingresar método de pago para publicar esta oferta.',
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: Colors.redAccent,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ],
 
                   if (isPendingForSpeaker) ...[
                     const SizedBox(height: 8),

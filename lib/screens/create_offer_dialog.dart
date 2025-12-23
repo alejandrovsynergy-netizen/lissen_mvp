@@ -3,6 +3,7 @@ import 'dart:ui';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import '../features/payments/speaker_payment_method.dart';
 
 Future<bool?> showCreateOfferDialog({
   required BuildContext context,
@@ -271,6 +272,21 @@ class _CreateOfferDialogState extends State<_CreateOfferDialog> {
     try {
       final amountPesos = int.parse(_amountC.text.trim());
 
+      final existingStatus = (widget.initialData?['status'] ?? '').toString();
+      final bool shouldGatePayment =
+          widget.offerId == null || existingStatus == 'payment_required';
+
+      String publishStatus = existingStatus.isNotEmpty ? existingStatus : 'active';
+      if (shouldGatePayment) {
+        final payments = SpeakerPaymentMethod();
+        final hasCard = await payments.ensureHasPaymentMethod(
+          context: context,
+          uid: widget.userId,
+        );
+        publishStatus = hasCard ? 'active' : 'payment_required';
+      }
+
+
       // Guardar lo que OffersPage espera + conservar lo tuyo
       final data = <String, dynamic>{
         // ===== CONTRATO OffersPage =====
@@ -300,7 +316,7 @@ class _CreateOfferDialogState extends State<_CreateOfferDialog> {
 
       if (widget.offerId == null) {
         data['createdAt'] = FieldValue.serverTimestamp();
-        data['status'] = 'active'; // OffersPage filtra active/pending_speaker
+        data['status'] = publishStatus; // active o payment_required
         await FirebaseFirestore.instance.collection('offers').add(data);
       } else {
         await FirebaseFirestore.instance

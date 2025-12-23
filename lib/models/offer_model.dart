@@ -11,6 +11,7 @@ class OfferModel {
   static const List<String> validStatuses = [
     statusActive,
     statusProcessingPayment,
+    statusPaymentRequired,
     statusPendingSpeaker,
     statusPendingCompanion,
     statusUsed,

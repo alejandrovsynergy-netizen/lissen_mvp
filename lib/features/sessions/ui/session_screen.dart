@@ -51,8 +51,6 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
   bool _joiningCall = false;
   bool _callUiOpen = false;
   String? _incomingCallId;
-  bool _callUiOpen = false;
-  String? _incomingCallId;
 
   // 🔹 Estado local de la sesión
   Map<String, dynamic>? _sessionData;
@@ -821,6 +819,7 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
                         MaterialPageRoute(
                           builder: (_) => LiveKitCallScreen(
                             sessionId: widget.sessionId,
+                            callId: callId,
                             url: url,
                             token: token,
                             callType: type,

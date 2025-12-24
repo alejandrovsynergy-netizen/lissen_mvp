@@ -819,6 +819,7 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
                         MaterialPageRoute(
                           builder: (_) => LiveKitCallScreen(
                             sessionId: widget.sessionId,
+                            callId: callId,
                             url: url,
                             token: token,
                             callType: type,

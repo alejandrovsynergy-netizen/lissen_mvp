@@ -81,6 +81,7 @@ class _IncomingCallScreenState extends State<IncomingCallScreen> {
             _ended = true;
             _statusMessage = 'Llamada finalizada.';
           });
+          Navigator.pop(context);
         }
         await _stopRingtone();
         return;
@@ -107,6 +108,7 @@ class _IncomingCallScreenState extends State<IncomingCallScreen> {
             _ended = true;
             _statusMessage = 'Llamada perdida.';
           });
+          Navigator.pop(context);
         }
       }
     });
@@ -152,6 +154,7 @@ class _IncomingCallScreenState extends State<IncomingCallScreen> {
         MaterialPageRoute(
           builder: (_) => LiveKitCallScreen(
             sessionId: widget.sessionId,
+            callId: widget.callId,
             url: url,
             token: token,
             callType: widget.callType,
@@ -184,7 +187,33 @@ class _IncomingCallScreenState extends State<IncomingCallScreen> {
     }
   }
 
+  Future<bool> _confirmHangUp() async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Rechazar llamada'),
+          content: const Text('¿Quieres colgar la llamada?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancelar'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Colgar'),
+            ),
+          ],
+        );
+      },
+    );
+    return result ?? false;
+  }
+
   Future<void> _reject() async {
+    final confirmed = await _confirmHangUp();
+    if (!confirmed) return;
+
     await _markEnded();
     if (mounted) {
       Navigator.pop(context);

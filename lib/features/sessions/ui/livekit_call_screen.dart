@@ -1,16 +1,21 @@
+import 'dart:async';
+
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:livekit_client/livekit_client.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 class LiveKitCallScreen extends StatefulWidget {
   final String sessionId;
+  final String callId;
   final String url;
   final String token;
   final String callType; // 'voice' | 'video'
 
   const LiveKitCallScreen({
     super.key,
-    required this.sessionId,  
+    required this.sessionId,
+    required this.callId,
     required this.url,
     required this.token,
     required this.callType,
@@ -23,6 +28,7 @@ class LiveKitCallScreen extends StatefulWidget {
 class _LiveKitCallScreenState extends State<LiveKitCallScreen> {
   Room? _room;
   EventsListener<RoomEvent>? _listener;
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _callSub;
 
   String? _error;
   bool _needsSettings = false;
@@ -30,7 +36,31 @@ class _LiveKitCallScreenState extends State<LiveKitCallScreen> {
   @override
   void initState() {
     super.initState();
+    _listenCallState();
     _connect();
+  }
+
+  void _listenCallState() {
+    _callSub = FirebaseFirestore.instance
+        .collection('sessions')
+        .doc(widget.sessionId)
+        .collection('call')
+        .doc('state')
+        .snapshots()
+        .listen((snap) {
+      final data = snap.data() ?? {};
+      final status = (data['status'] ?? '').toString();
+      final callId = (data['callId'] ?? '').toString();
+
+      if (callId.isNotEmpty && callId != widget.callId) {
+        if (mounted) Navigator.pop(context);
+        return;
+      }
+
+      if (status == 'ended' && mounted) {
+        Navigator.pop(context);
+      }
+    });
   }
 
   Future<void> _connect() async {
@@ -106,7 +136,45 @@ class _LiveKitCallScreenState extends State<LiveKitCallScreen> {
     }
   }
 
+  Future<void> _endCall() async {
+    try {
+      await FirebaseFirestore.instance
+          .collection('sessions')
+          .doc(widget.sessionId)
+          .collection('call')
+          .doc('state')
+          .set({'status': 'ended'}, SetOptions(merge: true));
+    } catch (_) {}
+  }
+
+  Future<bool> _confirmHangUp() async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Finalizar llamada'),
+          content: const Text('¿Quieres colgar la llamada?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancelar'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Colgar'),
+            ),
+          ],
+        );
+      },
+    );
+    return result ?? false;
+  }
+
   Future<void> _hangUp() async {
+    final confirmed = await _confirmHangUp();
+    if (!confirmed) return;
+
+    await _endCall();
     try {
       await _room?.disconnect();
     } catch (_) {}
@@ -115,6 +183,7 @@ class _LiveKitCallScreenState extends State<LiveKitCallScreen> {
 
   @override
   void dispose() {
+    _callSub?.cancel();
     _listener?.dispose();
     _room?.dispose();
     super.dispose();

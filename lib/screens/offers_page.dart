@@ -968,6 +968,8 @@ class _OffersPageState extends State<OffersPage> {
 
           final communicationType =
               (data['communicationType'] ?? 'chat').toString();
+              final bool canVoice = (communicationType == 'voice' || communicationType == 'video');
+              final bool canVideo = (communicationType == 'video');
           final currency = (data['currency'] ?? 'mxn').toString();
 
           tx.set(newSessionRef, {
@@ -981,6 +983,8 @@ class _OffersPageState extends State<OffersPage> {
             'updatedAt': FieldValue.serverTimestamp(),
             'durationMinutes': durationMinutes,
             'communicationType': communicationType,
+            'canVoice': canVoice,
+            'canVideo': canVideo,
             'currency': currency,
             'priceCents': rawPriceCents,
             'participants': [speakerId, pendingCompanionId],

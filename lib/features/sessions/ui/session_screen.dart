@@ -8,6 +8,10 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
 import '../../payments/payments_api.dart';
+import 'package:cloud_functions/cloud_functions.dart';
+import 'livekit_call_screen.dart';
+
+
 
 class SessionConversationScreen extends StatefulWidget {
   final String sessionId;
@@ -30,7 +34,6 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
   bool _finishing = false;
   bool _captureOk = false;
 
-
   // Mínimo a cobrar cuando la que corta es la compañera
   static const int kMinBillingMinutes = 10;
 
@@ -42,6 +45,10 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
 
   // Para no disparar el timeout más de una vez
   bool _autoTimeoutTriggered = false;
+
+  // 🔹 Call guard (evita abrir la pantalla varias veces)
+  String? _joinedCallId;
+  bool _joiningCall = false;
 
   // 🔹 Estado local de la sesión
   Map<String, dynamic>? _sessionData;
@@ -438,7 +445,6 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
         debugPrint('Stripe capture fallo: $e');
       }
 
-
       // Mezclamos los datos antiguos con los nuevos para actualizar la UI
       final mergedData = {...data, ...updateData};
 
@@ -457,7 +463,6 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
             ),
           ),
         );
-
       }
     } catch (e) {
       if (mounted) {
@@ -465,8 +470,7 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
           SnackBar(content: Text('No se pudo finalizar la sesión: $e')),
         );
       }
-    }
- finally {
+    } finally {
       if (mounted) setState(() => _finishing = false);
     }
   }
@@ -586,6 +590,13 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
     final endedBy = data['endedBy'] as String?;
     final isActive = status == 'active';
 
+    // ✅ Reglas de habilitación (se guardan/leen desde la sesión)
+    final communicationType = (data['communicationType'] ?? 'chat').toString();
+
+    final canVoice =
+        (data['canVoice'] ?? (communicationType == 'voice' || communicationType == 'video')) == true;
+    final canVideo = (data['canVideo'] ?? (communicationType == 'video')) == true;
+
     final speakerAlias = data['speakerAlias'] ?? 'Hablante';
     final companionAlias = data['companionAlias'] ?? 'Compañera';
 
@@ -662,27 +673,77 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
           title: Text(isActive ? otherAlias : 'Sesión finalizada'),
           centerTitle: true,
           actions: [
-            // Placeholder llamada de voz
+            // Llamada de voz (se habilita solo si la sesión está activa y la oferta permitió voz)
             IconButton(
               icon: const Icon(Icons.call),
-              onPressed: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Llamada de voz aún no está disponible.'),
-                  ),
-                );
-              },
+              onPressed: (isActive && canVoice)
+                  ? () async {
+                      try {
+                        final uid = FirebaseAuth.instance.currentUser?.uid;
+                        if (uid == null) return;
+
+                        final callId = '${DateTime.now().millisecondsSinceEpoch}_$uid';
+
+                        await FirebaseFirestore.instance
+                            .collection('sessions')
+                            .doc(widget.sessionId)
+                            .collection('call')
+                            .doc('state')
+                            .set({
+                          'status': 'ringing',
+                          'type': 'voice',
+                          'fromUid': uid,
+                          'callId': callId,
+                          'createdAt': FieldValue.serverTimestamp(),
+                          'expiresAtMs': DateTime.now().millisecondsSinceEpoch + 45000,
+                        });
+
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Llamando…')),
+                        );
+                      } catch (e) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('Error iniciando llamada: $e')),
+                        );
+                      }
+                    }
+                  : null,
             ),
-            // Placeholder videollamada
+            // Videollamada (se habilita solo si la sesión está activa y la oferta permitió video)
             IconButton(
               icon: const Icon(Icons.videocam),
-              onPressed: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Videollamada aún no está disponible.'),
-                  ),
-                );
-              },
+              onPressed: (isActive && canVideo)
+                  ? () async {
+                      try {
+                        final uid = FirebaseAuth.instance.currentUser?.uid;
+                        if (uid == null) return;
+
+                        final callId = '${DateTime.now().millisecondsSinceEpoch}_$uid';
+
+                        await FirebaseFirestore.instance
+                            .collection('sessions')
+                            .doc(widget.sessionId)
+                            .collection('call')
+                            .doc('state')
+                            .set({
+                          'status': 'ringing',
+                          'type': 'video',
+                          'fromUid': uid,
+                          'callId': callId,
+                          'createdAt': FieldValue.serverTimestamp(),
+                          'expiresAtMs': DateTime.now().millisecondsSinceEpoch + 45000,
+                        });
+
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Videollamando…')),
+                        );
+                      } catch (e) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('Error iniciando videollamada: $e')),
+                        );
+                      }
+                    }
+                  : null,
             ),
             // Botón pequeño para finalizar sesión (solo si está activa)
             if (isActive)
@@ -701,6 +762,143 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
         ),
         body: Column(
           children: [
+            StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+              stream: FirebaseFirestore.instance
+                  .collection('sessions')
+                  .doc(widget.sessionId)
+                  .collection('call')
+                  .doc('state')
+                  .snapshots(),
+              builder: (context, snap) {
+                final data = snap.data?.data();
+                final status = (data?['status'] ?? '').toString();
+                final type = (data?['type'] ?? '').toString();
+                final fromUid = (data?['fromUid'] ?? '').toString();
+                final expiresAtMs = (data?['expiresAtMs'] ?? 0) as int;
+
+                final myUid = FirebaseAuth.instance.currentUser?.uid ?? '';
+
+                final isRinging = status == 'ringing';
+                final isIncoming = isRinging && fromUid.isNotEmpty && fromUid != myUid;
+                final isExpired = isRinging && DateTime.now().millisecondsSinceEpoch > expiresAtMs;
+
+                if (isExpired) {
+                  // si expiró, lo apagamos
+                  FirebaseFirestore.instance
+                      .collection('sessions')
+                      .doc(widget.sessionId)
+                      .collection('call')
+                      .doc('state')
+                      .set({'status': 'ended'}, SetOptions(merge: true));
+                  return const SizedBox.shrink();
+                }
+
+                final callId = (data?['callId'] ?? '').toString();
+
+                final isActiveCall = status == 'active';
+                final shouldJoinNow =
+                    isActiveCall && type.isNotEmpty && callId.isNotEmpty;
+
+                if (shouldJoinNow && !_joiningCall && _joinedCallId != callId) {
+                  _joiningCall = true;
+                  _joinedCallId = callId;
+
+                  WidgetsBinding.instance.addPostFrameCallback((_) async {
+                    try {
+                      final res = await FirebaseFunctions.instance
+                          .httpsCallable('livekitGetToken')
+                          .call({
+                        'sessionId': widget.sessionId,
+                        'callType': type, // 'voice' o 'video'
+                      });
+
+                      final Map d = res.data as Map;
+                      final url = d['url']?.toString() ?? '';
+                      final token = d['token']?.toString() ?? '';
+
+                      if (!context.mounted) return;
+
+                      await Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => LiveKitCallScreen(
+                            sessionId: widget.sessionId,
+                            url: url,
+                            token: token,
+                            callType: type,
+                          ),
+                        ),
+                      );
+                    } catch (e) {
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text('No se pudo unir a la llamada: $e'),
+                          ),
+                        );
+                      }
+                    } finally {
+                      if (mounted) {
+                        setState(() {
+                          _joiningCall = false;
+                        });
+                      } else {
+                        _joiningCall = false;
+                      }
+                    }
+                  });
+
+                  return const SizedBox.shrink();
+                }
+
+                if (!isIncoming) return const SizedBox.shrink();
+
+                return Container(
+                  margin: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.white10,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.white12),
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          type == 'video' ? 'Videollamada entrante…' : 'Llamada entrante…',
+                          style: const TextStyle(fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: () async {
+                          // Rechazar
+                          await FirebaseFirestore.instance
+                              .collection('sessions')
+                              .doc(widget.sessionId)
+                              .collection('call')
+                              .doc('state')
+                              .set({'status': 'ended'}, SetOptions(merge: true));
+                        },
+                        child: const Text('Rechazar'),
+                      ),
+                      const SizedBox(width: 8),
+                      ElevatedButton(
+                        onPressed: () async {
+                          // Aceptar
+                          await FirebaseFirestore.instance
+                              .collection('sessions')
+                              .doc(widget.sessionId)
+                              .collection('call')
+                              .doc('state')
+                              .set({'status': 'active'}, SetOptions(merge: true));
+                        },
+                        child: const Text('Aceptar'),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
             // ======================================================
             // 🔸 HEADER PEQUEÑO DE SESIÓN
             // ======================================================
@@ -1214,7 +1412,7 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, size: 18),
+          Icon(icon, size: 18, color: borderColor),
           const SizedBox(width: 8),
           Expanded(
             child: Column(
@@ -1235,20 +1433,18 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
   }
 
   // ============================================================
-  // ✅ Aviso para la compañera: límites y cierre de conversación
+  // 🔵 Mensaje visual (solo para compañera) con límites / reglas de seguridad
   // ============================================================
   Widget _buildSafetyHintForCompanion() {
-    const title = 'Antes de iniciar (para ti, compañera)';
+    const title = 'Límites y seguridad';
     const text =
-        'Te recomendamos establecer límites claros desde el principio (temas que no quieres tratar, tono, duración y reglas de respeto). '
-        'Procura también cerrar las conversaciones que inicias: si algo queda pendiente, retómenlo de forma ordenada; si ya quedó resuelto, finalicen la sesión con claridad. '
-        'Si en cualquier momento te sientes incómoda o se te falta al respeto, tienes total libertad de pausar o finalizar la sesión de inmediato.';
+        'Recuerda mantener límites claros. Si algo te incomoda, puedes finalizar la sesión.';
 
     return Container(
       decoration: BoxDecoration(
-        color: const Color(0xFF4F46E5).withOpacity(0.12),
+        color: Colors.blue.withOpacity(0.10),
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFF4F46E5).withOpacity(0.55)),
+        border: Border.all(color: Colors.lightBlueAccent.withOpacity(0.6)),
       ),
       padding: const EdgeInsets.fromLTRB(10, 8, 22, 8),
       child: const Row(

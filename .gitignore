@@ -31,3 +31,12 @@ flutter_*.png
 # --- restore point ignores ---
 .firebase/
 *.zip
+
+# NO subir secretos
+functions/.env
+.env
+
+# NO subir logs
+hs_err_pid*.log
+android/hs_err_pid*.log
+

@@ -4,6 +4,8 @@
   const { getFirestore, FieldValue } = require("firebase-admin/firestore");
   const { onCall, HttpsError } = require("firebase-functions/v2/https");
   const PLATFORM_FEE_BPS = 2000; // 20%
+  const { AccessToken } = require("livekit-server-sdk");
+
 
 
   // Inicializar Firebase Admin
@@ -1008,4 +1010,88 @@
       return { ok: true, url: link.url };
     }
   );
+  
+  exports.livekitGetToken = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new HttpsError("unauthenticated", "Login required");
+  }
+
+  const sessionId = String(request.data?.sessionId ?? "");
+  const callType = String(request.data?.callType ?? "voice"); // "voice" | "video"
+
+  if (!sessionId) {
+    throw new HttpsError("invalid-argument", "Missing sessionId");
+  }
+  if (callType !== "voice" && callType !== "video") {
+    throw new HttpsError("invalid-argument", "Invalid callType");
+  }
+
+  const db = getFirestore();
+  const snap = await db.collection("sessions").doc(sessionId).get();
+  if (!snap.exists) {
+    throw new HttpsError("not-found", "Session not found");
+  }
+
+  const s = snap.data() || {};
+  const status = String(s.status ?? "active");
+  if (status !== "active") {
+    throw new HttpsError("failed-precondition", "Session is not active");
+  }
+
+  const speakerId = String(s.speakerId ?? "");
+  const companionId = String(s.companionId ?? "");
+  if (uid !== speakerId && uid !== companionId) {
+    throw new HttpsError("permission-denied", "Not a session participant");
+  }
+
+  // ✅ Validación mínima de "pago OK" (hold autorizado)
+  const paymentIntentId = s.paymentIntentId;
+  const holdAuthorizedAt = s.holdAuthorizedAt;
+  if (!paymentIntentId || !holdAuthorizedAt) {
+    throw new HttpsError("failed-precondition", "Payment hold not authorized");
+  }
+
+  // ✅ Permisos por oferta (flags en session)
+  const communicationType = String(s.communicationType ?? "chat");
+  const canVoice =
+    (s.canVoice ?? (communicationType === "voice" || communicationType === "video")) === true;
+  const canVideo =
+    (s.canVideo ?? (communicationType === "video")) === true;
+
+  if (callType === "voice" && !canVoice) {
+    throw new HttpsError("failed-precondition", "Voice not allowed");
+  }
+  if (callType === "video" && !canVideo) {
+    throw new HttpsError("failed-precondition", "Video not allowed");
+  }
+
+  const LIVEKIT_URL = process.env.LIVEKIT_URL;
+  const LIVEKIT_API_KEY = process.env.LIVEKIT_API_KEY;
+  const LIVEKIT_API_SECRET = process.env.LIVEKIT_API_SECRET;
+
+  if (!LIVEKIT_URL || !LIVEKIT_API_KEY || !LIVEKIT_API_SECRET) {
+    throw new HttpsError("failed-precondition", "LiveKit env not configured");
+  }
+
+  const token = new AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET, {
+    identity: uid,
+    name: String(s[uid === speakerId ? "speakerAlias" : "companionAlias"] ?? uid),
+  });
+
+  token.addGrant({
+    roomJoin: true,
+    room: sessionId,
+    canPublish: true,
+    canSubscribe: true,
+  });
+
+  return {
+    url: LIVEKIT_URL,
+    token: await token.toJwt(),
+    room: sessionId,
+    callType,
+  };
+});
+
 

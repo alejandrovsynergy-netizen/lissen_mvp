@@ -6,12 +6,12 @@ import 'package:flutter/services.dart'; // 👈 para HapticFeedback
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:image_picker/image_picker.dart';
 import '../../payments/payments_api.dart';
-import 'package:cloud_functions/cloud_functions.dart';
+import 'incoming_call_screen.dart';
 import 'livekit_call_screen.dart';
-
-
+import 'outgoing_call_screen.dart';
 
 class SessionConversationScreen extends StatefulWidget {
   final String sessionId;
@@ -49,6 +49,10 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
   // 🔹 Call guard (evita abrir la pantalla varias veces)
   String? _joinedCallId;
   bool _joiningCall = false;
+  bool _callUiOpen = false;
+  String? _incomingCallId;
+  bool _callUiOpen = false;
+  String? _incomingCallId;
 
   // 🔹 Estado local de la sesión
   Map<String, dynamic>? _sessionData;
@@ -133,6 +137,56 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
         _sessionError = 'Error cargando sesión: $e';
         _sessionLoading = false;
       });
+    }
+  }
+
+  Future<void> _startCall(String type, String otherAlias) async {
+    if (_callUiOpen) return;
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
+
+    final callId = '${DateTime.now().millisecondsSinceEpoch}_$uid';
+
+    try {
+      await FirebaseFirestore.instance
+          .collection('sessions')
+          .doc(widget.sessionId)
+          .collection('call')
+          .doc('state')
+          .set({
+        'status': 'ringing',
+        'type': type,
+        'fromUid': uid,
+        'callId': callId,
+        'createdAt': FieldValue.serverTimestamp(),
+        'expiresAtMs': DateTime.now().millisecondsSinceEpoch + 45000,
+      });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error iniciando llamada: $e')),
+        );
+      }
+      return;
+    }
+
+    if (!mounted) return;
+    setState(() => _callUiOpen = true);
+
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => OutgoingCallScreen(
+          sessionId: widget.sessionId,
+          callId: callId,
+          callType: type,
+          otherAlias: otherAlias,
+        ),
+      ),
+    );
+
+    if (mounted) {
+      setState(() => _callUiOpen = false);
     }
   }
 
@@ -676,74 +730,14 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
             // Llamada de voz (se habilita solo si la sesión está activa y la oferta permitió voz)
             IconButton(
               icon: const Icon(Icons.call),
-              onPressed: (isActive && canVoice)
-                  ? () async {
-                      try {
-                        final uid = FirebaseAuth.instance.currentUser?.uid;
-                        if (uid == null) return;
-
-                        final callId = '${DateTime.now().millisecondsSinceEpoch}_$uid';
-
-                        await FirebaseFirestore.instance
-                            .collection('sessions')
-                            .doc(widget.sessionId)
-                            .collection('call')
-                            .doc('state')
-                            .set({
-                          'status': 'ringing',
-                          'type': 'voice',
-                          'fromUid': uid,
-                          'callId': callId,
-                          'createdAt': FieldValue.serverTimestamp(),
-                          'expiresAtMs': DateTime.now().millisecondsSinceEpoch + 45000,
-                        });
-
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Llamando…')),
-                        );
-                      } catch (e) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('Error iniciando llamada: $e')),
-                        );
-                      }
-                    }
-                  : null,
+              onPressed:
+                  (isActive && canVoice) ? () => _startCall('voice', otherAlias) : null,
             ),
             // Videollamada (se habilita solo si la sesión está activa y la oferta permitió video)
             IconButton(
               icon: const Icon(Icons.videocam),
-              onPressed: (isActive && canVideo)
-                  ? () async {
-                      try {
-                        final uid = FirebaseAuth.instance.currentUser?.uid;
-                        if (uid == null) return;
-
-                        final callId = '${DateTime.now().millisecondsSinceEpoch}_$uid';
-
-                        await FirebaseFirestore.instance
-                            .collection('sessions')
-                            .doc(widget.sessionId)
-                            .collection('call')
-                            .doc('state')
-                            .set({
-                          'status': 'ringing',
-                          'type': 'video',
-                          'fromUid': uid,
-                          'callId': callId,
-                          'createdAt': FieldValue.serverTimestamp(),
-                          'expiresAtMs': DateTime.now().millisecondsSinceEpoch + 45000,
-                        });
-
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Videollamando…')),
-                        );
-                      } catch (e) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('Error iniciando videollamada: $e')),
-                        );
-                      }
-                    }
-                  : null,
+              onPressed:
+                  (isActive && canVideo) ? () => _startCall('video', otherAlias) : null,
             ),
             // Botón pequeño para finalizar sesión (solo si está activa)
             if (isActive)
@@ -779,7 +773,8 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
                 final myUid = FirebaseAuth.instance.currentUser?.uid ?? '';
 
                 final isRinging = status == 'ringing';
-                final isIncoming = isRinging && fromUid.isNotEmpty && fromUid != myUid;
+                final isIncoming =
+                    isRinging && fromUid.isNotEmpty && fromUid != myUid;
                 final isExpired = isRinging && DateTime.now().millisecondsSinceEpoch > expiresAtMs;
 
                 if (isExpired) {
@@ -799,7 +794,10 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
                 final shouldJoinNow =
                     isActiveCall && type.isNotEmpty && callId.isNotEmpty;
 
-                if (shouldJoinNow && !_joiningCall && _joinedCallId != callId) {
+                if (shouldJoinNow &&
+                    !_callUiOpen &&
+                    !_joiningCall &&
+                    _joinedCallId != callId) {
                   _joiningCall = true;
                   _joinedCallId = callId;
 
@@ -851,52 +849,42 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
                   return const SizedBox.shrink();
                 }
 
-                if (!isIncoming) return const SizedBox.shrink();
+                if (isIncoming &&
+                    !_callUiOpen &&
+                    callId.isNotEmpty &&
+                    _incomingCallId != callId) {
+                  WidgetsBinding.instance.addPostFrameCallback((_) async {
+                    if (!mounted || _callUiOpen) return;
+                    setState(() {
+                      _callUiOpen = true;
+                      _incomingCallId = callId;
+                    });
 
-                return Container(
-                  margin: const EdgeInsets.fromLTRB(12, 8, 12, 0),
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.white10,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.white12),
-                  ),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          type == 'video' ? 'Videollamada entrante…' : 'Llamada entrante…',
-                          style: const TextStyle(fontWeight: FontWeight.w600),
+                    await Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => IncomingCallScreen(
+                          sessionId: widget.sessionId,
+                          callId: callId,
+                          callType: type,
+                          otherAlias: otherAlias,
                         ),
                       ),
-                      TextButton(
-                        onPressed: () async {
-                          // Rechazar
-                          await FirebaseFirestore.instance
-                              .collection('sessions')
-                              .doc(widget.sessionId)
-                              .collection('call')
-                              .doc('state')
-                              .set({'status': 'ended'}, SetOptions(merge: true));
-                        },
-                        child: const Text('Rechazar'),
-                      ),
-                      const SizedBox(width: 8),
-                      ElevatedButton(
-                        onPressed: () async {
-                          // Aceptar
-                          await FirebaseFirestore.instance
-                              .collection('sessions')
-                              .doc(widget.sessionId)
-                              .collection('call')
-                              .doc('state')
-                              .set({'status': 'active'}, SetOptions(merge: true));
-                        },
-                        child: const Text('Aceptar'),
-                      ),
-                    ],
-                  ),
-                );
+                    );
+
+                    if (mounted) {
+                      setState(() {
+                        _callUiOpen = false;
+                        _incomingCallId = null;
+                      });
+                    } else {
+                      _callUiOpen = false;
+                      _incomingCallId = null;
+                    }
+                  });
+                }
+
+                return const SizedBox.shrink();
               },
             ),
             // ======================================================

@@ -51,6 +51,7 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
   bool _joiningCall = false;
   bool _callUiOpen = false;
   String? _incomingCallId;
+  String? _lastExpiredCallId;
 
   // 🔹 Estado local de la sesión
   Map<String, dynamic>? _sessionData;
@@ -136,6 +137,17 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
         _sessionLoading = false;
       });
     }
+  }
+
+  Future<void> _markCallEndedIfExpired() async {
+    try {
+      await FirebaseFirestore.instance
+          .collection('sessions')
+          .doc(widget.sessionId)
+          .collection('call')
+          .doc('state')
+          .set({'status': 'ended'}, SetOptions(merge: true));
+    } catch (_) {}
   }
 
   Future<void> _startCall(String type, String otherAlias) async {
@@ -773,20 +785,22 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
                 final isRinging = status == 'ringing';
                 final isIncoming =
                     isRinging && fromUid.isNotEmpty && fromUid != myUid;
+                final callId = (data?['callId'] ?? '').toString();
                 final isExpired = isRinging && DateTime.now().millisecondsSinceEpoch > expiresAtMs;
 
                 if (isExpired) {
                   // si expiró, lo apagamos
-                  FirebaseFirestore.instance
-                      .collection('sessions')
-                      .doc(widget.sessionId)
-                      .collection('call')
-                      .doc('state')
-                      .set({'status': 'ended'}, SetOptions(merge: true));
+                  if (callId.isNotEmpty && _lastExpiredCallId != callId) {
+                    _lastExpiredCallId = callId;
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      _markCallEndedIfExpired();
+                    });
+                  }
                   return const SizedBox.shrink();
                 }
-
-                final callId = (data?['callId'] ?? '').toString();
+                if (!isRinging) {
+                  _lastExpiredCallId = null;
+                }
 
                 final isActiveCall = status == 'active';
                 final shouldJoinNow =

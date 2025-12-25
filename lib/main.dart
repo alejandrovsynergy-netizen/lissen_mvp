@@ -77,6 +77,10 @@ class _AuthGate extends StatelessWidget {
         if (user == null) {
           return const AuthScreen();
         }
+        if (user.isAnonymous) {
+          FirebaseAuth.instance.signOut();
+          return const AuthScreen();
+        }
 
         // 🟢 Con usuario: montamos el listener global alrededor del root
         return GlobalSessionRatingListener(

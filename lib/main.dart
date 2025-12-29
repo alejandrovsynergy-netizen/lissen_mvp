@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:zego_zimkit/zego_zimkit.dart';
 
 import 'firebase_options.dart';
 import 'screens/auth_screen.dart';
@@ -9,12 +10,14 @@ import 'screens/onboarding_screen.dart';
 import 'screens/lissen_home.dart';
 import 'features/sessions/ui/session_screen.dart';
 import 'screens/global_session_rating_listener.dart';
+import 'features/zego/zego_config.dart';
 
 import 'theme/chat_theme.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  ZIMKit().init(appID: kZegoAppId);
   runApp(const LissenApp());
 }
 

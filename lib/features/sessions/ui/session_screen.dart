@@ -1,13 +1,14 @@
 import 'dart:async'; // necesario para Stream.periodic
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart'; // 👈 para HapticFeedback
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_storage/firebase_storage.dart';
-import 'package:image_picker/image_picker.dart';
+import 'package:zego_uikit_prebuilt_call/zego_uikit_prebuilt_call.dart';
+import 'package:zego_zimkit/zego_zimkit.dart';
 import '../../payments/payments_api.dart';
+import '../../zego/zego_config.dart';
+import '../../zego/zego_token_service.dart';
 
 class SessionConversationScreen extends StatefulWidget {
   final String sessionId;
@@ -21,14 +22,14 @@ class SessionConversationScreen extends StatefulWidget {
 
 class _SessionConversationScreenState extends State<SessionConversationScreen> {
   late final DocumentReference<Map<String, dynamic>> _sessionRef;
-  final TextEditingController _messageController = TextEditingController();
-  final FocusNode _messageFocusNode = FocusNode();
-  final ScrollController _scrollController = ScrollController();
-  final ImagePicker _imagePicker = ImagePicker();
-
-  bool _sending = false;
   bool _finishing = false;
   bool _captureOk = false;
+  final ZegoTokenService _zegoTokenService = ZegoTokenService();
+
+  bool _zegoConnecting = false;
+  bool _zegoReady = false;
+  String? _zegoError;
+  ZegoTokenResponse? _zegoToken;
 
 
   // Mínimo a cobrar cuando la que corta es la compañera
@@ -47,9 +48,6 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
   Map<String, dynamic>? _sessionData;
   bool _sessionLoading = true;
   String? _sessionError;
-
-  // 🔹 Para hacer scroll al final solo una vez al cargar mensajes
-  bool _hasScrolledInitialMessages = false;
 
   // 🔹 Listener en tiempo real de la sesión
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _sessionSub;
@@ -78,6 +76,7 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
           _sessionLoading = false;
           _sessionError = null;
         });
+        _ensureZegoReady();
       },
       onError: (e) {
         if (!mounted) return;
@@ -92,9 +91,6 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
   @override
   void dispose() {
     _sessionSub?.cancel();
-    _messageController.dispose();
-    _messageFocusNode.dispose();
-    _scrollController.dispose();
     super.dispose();
   }
 
@@ -121,6 +117,7 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
         _sessionData = snap.data();
         _sessionLoading = false;
       });
+      _ensureZegoReady();
     } catch (e) {
       setState(() {
         _sessionError = 'Error cargando sesión: $e';
@@ -129,214 +126,117 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
     }
   }
 
-  void _scrollToBottom() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!_scrollController.hasClients) return;
-      // Lista en modo chat: reverse: true => el fondo visual es posición 0.0
-      _scrollController.animateTo(
-        0.0,
-        duration: const Duration(milliseconds: 250),
-        curve: Curves.easeOut,
-      );
-    });
+  String _resolveMyAlias(Map<String, dynamic> data, String myUid) {
+    final speakerId = (data['speakerId'] ?? '').toString();
+    if (speakerId == myUid) {
+      return (data['speakerAlias'] ?? 'Hablante').toString();
+    }
+    return (data['companionAlias'] ?? 'Compañera').toString();
   }
 
-  Future<void> _markMessagesAsRead(
-    List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
-    String myUid,
-  ) async {
-    final batch = FirebaseFirestore.instance.batch();
-    bool hasChanges = false;
+  String _resolveOtherUserId(Map<String, dynamic> data, String myUid) {
+    final speakerId = (data['speakerId'] ?? '').toString();
+    final companionId = (data['companionId'] ?? '').toString();
+    return speakerId == myUid ? companionId : speakerId;
+  }
 
-    for (final d in docs) {
-      final data = d.data();
-      final senderId = data['senderId'] as String? ?? '';
-      final status = data['status'] as String? ?? 'sent';
-
-      if (senderId != myUid && status != 'read') {
-        batch.update(d.reference, {'status': 'read'});
-        hasChanges = true;
-      }
-    }
-
-    if (hasChanges) {
+  Future<void> _ensureZegoGroup({
+    required String groupId,
+    required String groupName,
+    required List<String> userIds,
+  }) async {
+    try {
+      await ZIMKit().createGroup(
+        groupName: groupName,
+        groupID: groupId,
+        userIDs: userIds,
+      );
+    } catch (_) {
       try {
-        await batch.commit();
-      } catch (_) {
-        // si falla no pasa nada grave, se reintenta al siguiente snapshot
-      }
+        await ZIMKit().joinGroup(groupId);
+      } catch (_) {}
     }
   }
 
-  Widget _buildStatusIcon(String status, {bool isActive = true}) {
-    IconData icon;
-    Color color;
-
-    switch (status) {
-      case 'read':
-        icon = Icons.done_all;
-        color = isActive ? Colors.lightBlueAccent : Colors.grey;
-        break;
-      case 'sent':
-      default:
-        icon = Icons.check;
-        color = isActive ? Colors.white70 : Colors.grey;
-        break;
-    }
-
-    return Icon(icon, size: 14, color: color);
-  }
-
-  // ============================================================
-  // 🔵 ENVIAR MENSAJE DE TEXTO
-  // ============================================================
-  Future<void> _sendMessage() async {
+  Future<void> _ensureZegoReady() async {
+    if (_zegoReady || _zegoConnecting || _sessionData == null) return;
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
 
-    final text = _messageController.text.trim();
-    if (text.isEmpty) return;
-    if (_sending) return;
-
-    // Vibración ligera al enviar mensaje
-    HapticFeedback.lightImpact();
-
-    setState(() => _sending = true);
+    setState(() {
+      _zegoConnecting = true;
+      _zegoError = null;
+    });
 
     try {
-      // Verificar que la sesión esté activa antes de enviar (consulta directa)
-      final snap = await _sessionRef.get();
-      final status = snap.data()?['status'] ?? 'active';
-      if (status != 'active') {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('La sesión ya no está activa.')),
-          );
-        }
-        await _loadSessionOnce();
-        return;
-      }
-
-      // Obtener alias del usuario
-      final userDoc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid)
-          .get();
-      final alias = userDoc.data()?['alias'] ?? user.email ?? 'Usuario';
-
-      // 🔹 Timestamp local estable para el orden
-      final nowMs = DateTime.now().millisecondsSinceEpoch;
-
-      // Guardar mensaje (tipo texto)
-      await _sessionRef.collection('messages').add({
-        'text': text,
-        'type': 'text',
-        'senderId': user.uid,
-        'senderAlias': alias,
-        'createdAt': FieldValue.serverTimestamp(),
-        'localCreatedAtMs': nowMs, // 👈 orden estable
-        'status': 'sent', // para palomitas
-      });
-
-      _messageController.clear();
-      _scrollToBottom();
-
-      // Mantener el foco en el área de escritura
-      if (mounted) {
-        _messageFocusNode.requestFocus();
-      }
-    } catch (_) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('No se pudo enviar el mensaje. Intenta de nuevo.'),
-          ),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _sending = false);
-    }
-  }
-
-  // ============================================================
-  // 📷 ENVIAR FOTO (mensaje tipo imagen)
-  // ============================================================
-  Future<void> _sendImage() async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return;
-
-    if (_sending) return;
-
-    // Vibración ligera al abrir selector
-    HapticFeedback.selectionClick();
-
-    try {
-      final picked = await _imagePicker.pickImage(
-        source: ImageSource.gallery,
-        imageQuality: 80,
+      final data = _sessionData!;
+      final myAlias = _resolveMyAlias(data, user.uid);
+      final otherUserId = _resolveOtherUserId(data, user.uid);
+      final token = await _zegoTokenService.fetchToken(
+        userId: user.uid,
+        userName: myAlias,
       );
-      if (picked == null) return;
 
-      setState(() => _sending = true);
+      await ZIMKit().connectUser(
+        id: user.uid,
+        name: myAlias,
+        token: token.token,
+      );
 
-      // Verificar que la sesión esté activa antes de enviar
-      final snap = await _sessionRef.get();
-      final status = snap.data()?['status'] ?? 'active';
-      if (status != 'active') {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('La sesión ya no está activa.')),
-          );
-        }
-        await _loadSessionOnce();
-        return;
-      }
+      await _ensureZegoGroup(
+        groupId: widget.sessionId,
+        groupName: 'session-${widget.sessionId}',
+        userIds: [user.uid, otherUserId],
+      );
 
-      // Subir a Firebase Storage
-      final file = File(picked.path);
-      final storageRef = FirebaseStorage.instance
-          .ref()
-          .child('session_images')
-          .child(widget.sessionId)
-          .child('${DateTime.now().millisecondsSinceEpoch}_${user.uid}.jpg');
-
-      final uploadTask = await storageRef.putFile(file);
-      final imageUrl = await uploadTask.ref.getDownloadURL();
-
-      // Obtener alias del usuario
-      final userDoc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid)
-          .get();
-      final alias = userDoc.data()?['alias'] ?? user.email ?? 'Usuario';
-
-      // 🔹 Timestamp local estable para el orden
-      final nowMs = DateTime.now().millisecondsSinceEpoch;
-
-      // Guardar mensaje tipo imagen
-      await _sessionRef.collection('messages').add({
-        'text': '',
-        'type': 'image',
-        'imageUrl': imageUrl,
-        'senderId': user.uid,
-        'senderAlias': alias,
-        'createdAt': FieldValue.serverTimestamp(),
-        'localCreatedAtMs': nowMs,
-        'status': 'sent',
+      if (!mounted) return;
+      setState(() {
+        _zegoToken = token;
+        _zegoReady = true;
       });
-
-      _scrollToBottom();
-    } catch (_) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('No se pudo enviar la imagen. Intenta de nuevo.'),
-          ),
-        );
-      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _zegoError = 'No se pudo conectar a Zego: $e';
+      });
     } finally {
-      if (mounted) setState(() => _sending = false);
+      if (mounted) {
+        setState(() => _zegoConnecting = false);
+      }
     }
+  }
+
+  void _openCall({required bool video}) {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+    if (!_zegoReady || _zegoToken == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('El chat aún se está conectando.'),
+        ),
+      );
+      return;
+    }
+
+    final data = _sessionData;
+    if (data == null) return;
+    final myAlias = _resolveMyAlias(data, user.uid);
+    final config = video
+        ? ZegoUIKitPrebuiltCallConfig.oneOnOneVideoCall()
+        : ZegoUIKitPrebuiltCallConfig.oneOnOneVoiceCall();
+
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ZegoUIKitPrebuiltCall(
+          appID: kZegoAppId,
+          userID: user.uid,
+          userName: myAlias,
+          callID: widget.sessionId,
+          token: _zegoToken!.token,
+          config: config,
+        ),
+      ),
+    );
   }
 
   // ============================================================
@@ -665,24 +565,12 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
             // Placeholder llamada de voz
             IconButton(
               icon: const Icon(Icons.call),
-              onPressed: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Llamada de voz aún no está disponible.'),
-                  ),
-                );
-              },
+              onPressed: isActive ? () => _openCall(video: false) : null,
             ),
             // Placeholder videollamada
             IconButton(
               icon: const Icon(Icons.videocam),
-              onPressed: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Videollamada aún no está disponible.'),
-                  ),
-                );
-              },
+              onPressed: isActive ? () => _openCall(video: true) : null,
             ),
             // Botón pequeño para finalizar sesión (solo si está activa)
             if (isActive)
@@ -909,283 +797,48 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
                 ),
               ),
 
-            // ======================================================
-            // 🔸 LISTA DE MENSAJES (estilo chat)
-            // ======================================================
-            Expanded(
-              child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-                stream: _sessionRef
-                    .collection('messages')
-                    .orderBy('localCreatedAtMs', descending: true)
-                    .snapshots(),
-                builder: (context, msgSnap) {
-                  if (msgSnap.hasError) {
-                    return Center(
-                      child: Text(
-                        'Error: ${msgSnap.error}',
-                        textAlign: TextAlign.center,
-                      ),
-                    );
-                  }
-
-                  if (msgSnap.connectionState == ConnectionState.waiting) {
-                    return const Center(child: CircularProgressIndicator());
-                  }
-
-                  final docs = msgSnap.data?.docs ?? [];
-
-                  if (docs.isEmpty) {
-                    return Center(
-                      child: Text(
-                        isActive
-                            ? 'Aún no hay mensajes.\nEmpiecen a conversar.'
-                            : 'Sesión finalizada.',
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(color: Colors.grey),
-                      ),
-                    );
-                  }
-
-                  // Marcar como leídos los mensajes entrantes
-                  WidgetsBinding.instance.addPostFrameCallback((_) {
-                    _markMessagesAsRead(docs, user.uid);
-                  });
-
-                  // Hacer scroll al fondo (visual) solo la primera vez
-                  if (!_hasScrolledInitialMessages) {
-                    _hasScrolledInitialMessages = true;
-                    _scrollToBottom();
-                  }
-
-                  return ListView.builder(
-                    controller: _scrollController,
-                    reverse: true,
-                    padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-                    itemCount: docs.length,
-                    itemBuilder: (_, i) {
-                      final msgDoc = docs[i];
-                      final msg = msgDoc.data();
-                      final msgId = msgDoc.id;
-                      final text = msg['text'] ?? '';
-                      final senderId = msg['senderId'] ?? '';
-                      final senderAlias = msg['senderAlias'] ?? 'Usuario';
-
-                      final type = msg['type'] ?? 'text';
-                      final imageUrl = msg['imageUrl'] as String?;
-                      final statusStr = (msg['status'] as String?) ?? 'sent';
-
-                      final createdAtTs = msg['createdAt'] as Timestamp?;
-                      DateTime? createdAtMsg = createdAtTs?.toDate();
-
-                      // Si aún no tiene createdAt del servidor, usamos el local
-                      if (createdAtMsg == null) {
-                        final localMs = msg['localCreatedAtMs'] as int?;
-                        if (localMs != null) {
-                          createdAtMsg =
-                              DateTime.fromMillisecondsSinceEpoch(localMs);
-                        }
-                      }
-
-                      String timeLabel = '--:--';
-                      if (createdAtMsg != null) {
-                        final hh = createdAtMsg.hour.toString().padLeft(2, '0');
-                        final mm =
-                            createdAtMsg.minute.toString().padLeft(2, '0');
-                        timeLabel = '$hh:$mm';
-                      }
-
-                      final isMe = senderId == user.uid;
-
-                      final bubbleColor = isMe
-                          ? const Color(0xFF4F46E5)
-                          : Colors.white10;
-                      final textColor = isMe ? Colors.white : Colors.grey[200];
-
-                      final aliasColor = isMe ? Colors.white70 : Colors.grey;
-
-                      List<Widget> contentChildren = [];
-
-                      // Alias arriba
-                      contentChildren.add(
-                        Text(
-                          senderAlias,
-                          style: TextStyle(fontSize: 10, color: aliasColor),
-                        ),
-                      );
-                      contentChildren.add(const SizedBox(height: 2));
-
-                      // Contenido según tipo
-                      if (type == 'image' && imageUrl != null) {
-                        contentChildren.add(
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(10),
-                            child: Image.network(
-                              imageUrl,
-                              fit: BoxFit.cover,
-                              loadingBuilder:
-                                  (context, child, loadingProgress) {
-                                if (loadingProgress == null) {
-                                  return child;
-                                }
-                                return Container(
-                                  height: 180,
-                                  alignment: Alignment.center,
-                                  child: const CircularProgressIndicator(),
-                                );
-                              },
-                            ),
-                          ),
-                        );
-                        if (text.toString().trim().isNotEmpty) {
-                          contentChildren.add(const SizedBox(height: 4));
-                          contentChildren.add(
-                            Text(
-                              text,
-                              style: TextStyle(fontSize: 13, color: textColor),
-                            ),
-                          );
-                        }
-                      } else {
-                        contentChildren.add(
-                          Text(
-                            text,
-                            style: TextStyle(fontSize: 13, color: textColor),
-                          ),
-                        );
-                      }
-
-                      // Hora + palomitas al final
-                      contentChildren.add(const SizedBox(height: 4));
-                      contentChildren.add(
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
-                          mainAxisAlignment: MainAxisAlignment.end,
-                          children: [
-                            Text(
-                              timeLabel,
-                              style: TextStyle(
-                                fontSize: 10,
-                                color: isMe ? Colors.white70 : Colors.grey[400],
-                              ),
-                            ),
-                            if (isMe) ...[
-                              const SizedBox(width: 4),
-                              _buildStatusIcon(statusStr, isActive: isActive),
-                            ],
-                          ],
-                        ),
-                      );
-
-                      return KeyedSubtree(
-                        key: ValueKey(msgId),
-                        child: Align(
-                          alignment: isMe
-                              ? Alignment.centerRight
-                              : Alignment.centerLeft,
-                          child: Container(
-                            margin: const EdgeInsets.symmetric(vertical: 3),
-                            padding: const EdgeInsets.all(9),
-                            constraints: const BoxConstraints(maxWidth: 260),
-                            decoration: BoxDecoration(
-                              color: bubbleColor,
-                              borderRadius: BorderRadius.only(
-                                topLeft: const Radius.circular(14),
-                                topRight: const Radius.circular(14),
-                                bottomLeft: Radius.circular(isMe ? 14 : 4),
-                                bottomRight: Radius.circular(isMe ? 4 : 14),
-                              ),
-                            ),
-                            child: Column(
-                              crossAxisAlignment: isMe
-                                  ? CrossAxisAlignment.end
-                                  : CrossAxisAlignment.start,
-                              children: contentChildren,
-                            ),
-                          ),
-                        ),
-                      );
-                    },
-                  );
-                },
-              ),
-            ),
-
-            // ======================================================
-            // 🔸 INPUT PARA ENVIAR MENSAJES
-            // ======================================================
-            SafeArea(
-              top: false,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                decoration: const BoxDecoration(
-                  border: Border(
-                    top: BorderSide(color: Colors.white12, width: 0.5),
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    IconButton(
-                      icon: const Icon(Icons.emoji_emotions_outlined),
-                      onPressed: isActive
-                          ? () {
-                              _messageFocusNode.requestFocus();
-                            }
-                          : null,
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.photo),
-                      onPressed: (!isActive || _sending) ? null : _sendImage,
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.mic),
-                      onPressed: isActive
-                          ? () {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text(
-                                    'Notas de voz estarán disponibles pronto.',
-                                  ),
-                                ),
-                              );
-                            }
-                          : null,
-                    ),
-                    Expanded(
-                      child: TextField(
-                        controller: _messageController,
-                        focusNode: _messageFocusNode,
-                        maxLines: 4,
-                        minLines: 1,
-                        readOnly: !isActive,
-                        decoration: InputDecoration(
-                          hintText:
-                              isActive ? 'Escribe un mensaje...' : 'Sesión finalizada',
-                          border: const OutlineInputBorder(),
-                        ),
-                        onSubmitted: (_) {
-                          if (isActive) _sendMessage();
-                        },
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    IconButton(
-                      onPressed: (!isActive || _sending) ? null : _sendMessage,
-                      icon: _sending
-                          ? const SizedBox(
-                              height: 18,
-                              width: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.send),
-                    ),
-                  ],
-                ),
-              ),
-            ),
+            Expanded(child: _buildZegoChat(isActive: isActive)),
           ],
         ),
       ),
     );
+  }
+
+  Widget _buildZegoChat({required bool isActive}) {
+    if (_zegoError != null) {
+      return Center(
+        child: Text(
+          _zegoError!,
+          textAlign: TextAlign.center,
+          style: const TextStyle(color: Colors.redAccent),
+        ),
+      );
+    }
+
+    if (!_zegoReady) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    Widget chatBody = ZIMKitMessageListPage(
+      conversationID: widget.sessionId,
+      conversationType: ZIMConversationType.group,
+    );
+
+    if (!isActive) {
+      chatBody = Stack(
+        children: [
+          AbsorbPointer(child: chatBody),
+          const Center(
+            child: Text(
+              'Sesión finalizada.',
+              style: TextStyle(color: Colors.grey),
+            ),
+          ),
+        ],
+      );
+    }
+
+    return chatBody;
   }
 
   // ============================================================

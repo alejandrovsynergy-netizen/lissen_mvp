@@ -3,6 +3,7 @@
   const { initializeApp } = require("firebase-admin/app");
   const { getFirestore, FieldValue } = require("firebase-admin/firestore");
   const { onCall, HttpsError } = require("firebase-functions/v2/https");
+  const crypto = require("crypto");
   const PLATFORM_FEE_BPS = 2000; // 20%
 
 
@@ -11,7 +12,7 @@
   const db = getFirestore();
 
   // 🔥 Se ejecuta cuando se crea una foto o video en la galería
-  exports.onGalleryItemCreated = onDocumentCreated(
+  exports.onGalleryItemCreatedV2 = onDocumentCreated(
     "users/{uid}/gallery/{mediaId}",
     async (event) => {
       const snap = event.data;
@@ -45,9 +46,92 @@
   const { defineSecret } = require("firebase-functions/params");
   const STRIPE_SECRET_KEY = defineSecret("STRIPE_SECRET_KEY");
   const STRIPE_PUBLISHABLE_KEY = defineSecret("STRIPE_PUBLISHABLE_KEY");
+  const ZEGO_SERVER_SECRET = defineSecret("ZEGO_SERVER_SECRET");
+  const ZEGO_APP_ID = 346791689;
+  const ZEGO_TOKEN_EXPIRE_SECONDS = 60 * 60 * 2;
 
   // API version para ephemeral keys (usa una fija y estable)
   const EPHEMERAL_KEY_API_VERSION = "2023-10-16";
+
+  function generateZegoToken04({
+    appId,
+    userId,
+    secret,
+    effectiveTimeInSeconds,
+    payload = "",
+  }) {
+    const ctime = Math.floor(Date.now() / 1000);
+    const expire = ctime + effectiveTimeInSeconds;
+    const nonce = Math.floor(Math.random() * 2147483647);
+
+    const tokenInfo = {
+      app_id: appId,
+      user_id: userId,
+      nonce,
+      ctime,
+      expire,
+      payload,
+    };
+
+    const tokenInfoStr = JSON.stringify(tokenInfo);
+    const tokenInfoBuffer = Buffer.from(tokenInfoStr);
+    const signature = crypto
+      .createHmac("sha256", secret)
+      .update(tokenInfoBuffer)
+      .digest();
+    const signatureLengthBuffer = Buffer.alloc(2);
+    signatureLengthBuffer.writeUInt16BE(signature.length, 0);
+
+    const tokenBuffer = Buffer.concat([
+      signatureLengthBuffer,
+      signature,
+      tokenInfoBuffer,
+    ]);
+
+    return {
+      token: `04${tokenBuffer.toString("base64")}`,
+      expireAtMs: expire * 1000,
+    };
+  }
+
+  exports.zego_generateToken = onCall(
+    {
+      region: "us-central1",
+      secrets: [ZEGO_SERVER_SECRET],
+    },
+    async (request) => {
+      if (!request.auth) {
+        throw new HttpsError("unauthenticated", "Auth requerida.");
+      }
+
+      const requestedUserId = (request.data?.userId || "").toString().trim();
+      const userId = requestedUserId || request.auth.uid;
+
+      if (userId !== request.auth.uid) {
+        throw new HttpsError(
+          "permission-denied",
+          "No puedes generar token para otro usuario."
+        );
+      }
+
+      if (!userId) {
+        throw new HttpsError("invalid-argument", "userId requerido.");
+      }
+
+      const { token, expireAtMs } = generateZegoToken04({
+        appId: ZEGO_APP_ID,
+        userId,
+        secret: ZEGO_SERVER_SECRET.value(),
+        effectiveTimeInSeconds: ZEGO_TOKEN_EXPIRE_SECONDS,
+        payload: "",
+      });
+
+      return {
+        token,
+        expireAtMs,
+      };
+    }
+  );
 
   exports.payments_prepareSetupIntent = onCall(
     {
@@ -1008,4 +1092,3 @@
       return { ok: true, url: link.url };
     }
   );
-

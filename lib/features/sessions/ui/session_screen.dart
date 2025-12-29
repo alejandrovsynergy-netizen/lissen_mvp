@@ -307,6 +307,39 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
     );
   }
 
+  void _openCall({required bool video}) {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+    if (!_zegoReady || _zegoToken == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('El chat aún se está conectando.'),
+        ),
+      );
+      return;
+    }
+
+    final data = _sessionData;
+    if (data == null) return;
+    final myAlias = _resolveMyAlias(data, user.uid);
+    final config = video
+        ? ZegoUIKitPrebuiltCallConfig.oneOnOneVideoCall()
+        : ZegoUIKitPrebuiltCallConfig.oneOnOneVoiceCall();
+
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ZegoUIKitPrebuiltCall(
+          appID: kZegoAppId,
+          userID: user.uid,
+          userName: myAlias,
+          callID: widget.sessionId,
+          token: _zegoToken!.token,
+          config: config,
+        ),
+      ),
+    );
+  }
+
   // ============================================================
   // 🔵 FINALIZAR SESIÓN (lógica de cobros manual: botón)
   // ============================================================

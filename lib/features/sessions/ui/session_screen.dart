@@ -5,6 +5,7 @@ import 'package:flutter/services.dart'; // 👈 para HapticFeedback
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:zego_uikit_prebuilt_call/zego_uikit_prebuilt_call.dart';
+import 'package:zego_zim/zego_zim.dart';
 import 'package:zego_zimkit/zego_zimkit.dart';
 import '../../payments/payments_api.dart';
 import '../../zego/zego_config.dart';
@@ -146,12 +147,19 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
     required List<String> userIds,
   }) async {
     try {
-      await ZIMKit().createGroup(
+      await (ZIMKit() as dynamic).createGroup(
         groupName: groupName,
         groupID: groupId,
         userIDs: userIds,
       );
     } catch (_) {
+      try {
+        await (ZIMKit() as dynamic).createGroup(
+          groupName,
+          groupId,
+          userIDs: userIds,
+        );
+      } catch (_) {}
       try {
         await ZIMKit().joinGroup(groupId);
       } catch (_) {}
@@ -177,11 +185,18 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
         userName: myAlias,
       );
 
-      await ZIMKit().connectUser(
-        id: user.uid,
-        name: myAlias,
-        token: token.token,
-      );
+      try {
+        await (ZIMKit() as dynamic).connectUser(
+          id: user.uid,
+          name: myAlias,
+          token: token.token,
+        );
+      } catch (_) {
+        await ZIMKit().connectUser(id: user.uid, name: myAlias);
+        try {
+          await (ZIMKit() as dynamic).setToken(token.token);
+        } catch (_) {}
+      }
 
       await _ensureZegoGroup(
         groupId: widget.sessionId,
@@ -204,6 +219,26 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
         setState(() => _zegoConnecting = false);
       }
     }
+
+    final data = _sessionData;
+    if (data == null) return;
+    final myAlias = _resolveMyAlias(data, user.uid);
+    final config = video
+        ? ZegoUIKitPrebuiltCallConfig.oneOnOneVideoCall()
+        : ZegoUIKitPrebuiltCallConfig.oneOnOneVoiceCall();
+
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ZegoUIKitPrebuiltCall(
+          appID: kZegoAppId,
+          userID: user.uid,
+          userName: myAlias,
+          callID: widget.sessionId,
+          token: _zegoToken!.token,
+          config: config,
+        ),
+      ),
+    );
   }
 
   void _openCall({required bool video}) {

@@ -1,0 +1,13 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Flutter (ZEGO)",
+      "request": "launch",
+      "type": "dart",
+      "args": [
+        "--dart-define=ZEGO_APP_SIGN=34d7fee515e5d505b0eefc28016c98cb50b66afc3d800796e2e4f1a109d38bb2"
+      ]
+    }
+  ]
+}

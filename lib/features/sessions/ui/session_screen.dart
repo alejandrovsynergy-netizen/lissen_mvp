@@ -1,15 +1,16 @@
-import 'dart:async'; // necesario para Stream.periodic
+import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart'; // 👈 para HapticFeedback
+import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+
 import 'package:zego_uikit_prebuilt_call/zego_uikit_prebuilt_call.dart';
-import 'package:zego_zim/zego_zim.dart';
+import 'package:zego_zim/zego_zim.dart'; // ZIMConversationType
 import 'package:zego_zimkit/zego_zimkit.dart';
+
 import '../../payments/payments_api.dart';
 import '../../zego/zego_config.dart';
-import '../../zego/zego_token_service.dart';
 
 class SessionConversationScreen extends StatefulWidget {
   final String sessionId;
@@ -23,47 +24,43 @@ class SessionConversationScreen extends StatefulWidget {
 
 class _SessionConversationScreenState extends State<SessionConversationScreen> {
   late final DocumentReference<Map<String, dynamic>> _sessionRef;
+
   bool _finishing = false;
   bool _captureOk = false;
-  final ZegoTokenService _zegoTokenService = ZegoTokenService();
 
   bool _zegoConnecting = false;
   bool _zegoReady = false;
   String? _zegoError;
-  ZegoTokenResponse? _zegoToken;
-
 
   // Mínimo a cobrar cuando la que corta es la compañera
   static const int kMinBillingMinutes = 10;
 
-  // Mostrar u ocultar el aviso de reglas
   bool _showBillingHint = true;
-
-  // ✅ Mostrar u ocultar el aviso de límites (solo compañera)
   bool _showSafetyHint = true;
-
-  // Para no disparar el timeout más de una vez
   bool _autoTimeoutTriggered = false;
 
-  // 🔹 Estado local de la sesión
   Map<String, dynamic>? _sessionData;
   bool _sessionLoading = true;
   String? _sessionError;
 
-  // 🔹 Listener en tiempo real de la sesión
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _sessionSub;
+
+  // ✅ Para incrustar chat sin Scaffold extra:
+  final ScrollController _listScrollController = ScrollController();
+  final ZIMKitRecordStatus _recordStatus = ZIMKitRecordStatus();
 
   @override
   void initState() {
     super.initState();
+
     _sessionRef =
         FirebaseFirestore.instance.collection('sessions').doc(widget.sessionId);
 
-    // Escuchar la sesión en tiempo real para actualizar la UI
     _sessionLoading = true;
     _sessionSub = _sessionRef.snapshots().listen(
       (snap) {
         if (!mounted) return;
+
         if (!snap.exists) {
           setState(() {
             _sessionData = null;
@@ -72,12 +69,14 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
           });
           return;
         }
+
         setState(() {
           _sessionData = snap.data();
           _sessionLoading = false;
           _sessionError = null;
         });
-        _ensureZegoReady();
+
+        _ensureZegoReady(); // ✅ intenta conectar ZIM cuando ya hay data
       },
       onError: (e) {
         if (!mounted) return;
@@ -92,12 +91,9 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
   @override
   void dispose() {
     _sessionSub?.cancel();
+    _listScrollController.dispose();
     super.dispose();
   }
-
-  // ============================================================
-  // 🔧 Utilidades internas
-  // ============================================================
 
   Future<void> _loadSessionOnce() async {
     setState(() {
@@ -141,222 +137,180 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
     return speakerId == myUid ? companionId : speakerId;
   }
 
-  Future<void> _ensureZegoGroup({
-    required String groupId,
-    required String groupName,
-    required List<String> userIds,
-  }) async {
+  String _resolveOtherAlias(Map<String, dynamic> data, String myUid) {
+    final speakerId = (data['speakerId'] ?? '').toString();
+    final speakerAlias = (data['speakerAlias'] ?? 'Hablante').toString();
+    final companionAlias = (data['companionAlias'] ?? 'Compañera').toString();
+    return speakerId == myUid ? companionAlias : speakerAlias;
+  }
+
+  bool _isZimLoggedInAs(String uid) {
     try {
-      await (ZIMKit() as dynamic).createGroup(
-        groupName: groupName,
-        groupID: groupId,
-        userIDs: userIds,
-      );
+      // Usamos dynamic para no romper con cambios de SDK.
+      final dynamic u = (ZIMKit() as dynamic).currentUser();
+      if (u == null) return false;
+
+      final dynamic base = u.baseInfo;
+      final dynamic idAny =
+          (base?.userID ?? base?.userId ?? u.userID ?? u.userId ?? u.id);
+
+      return idAny?.toString() == uid;
     } catch (_) {
-      try {
-        await (ZIMKit() as dynamic).createGroup(
-          groupName,
-          groupId,
-          userIDs: userIds,
-        );
-      } catch (_) {}
-      try {
-        await ZIMKit().joinGroup(groupId);
-      } catch (_) {}
+      return false;
     }
   }
 
+  Future<void> _disconnectZimSilently() async {
+    try {
+      await (ZIMKit() as dynamic).disconnectUser();
+    } catch (_) {
+      // silencioso
+    }
+  }
+
+  /// ✅ Conecta ZIMKit para 1-a-1 (peer). SIN grupos.
   Future<void> _ensureZegoReady() async {
-    if (_zegoReady || _zegoConnecting || _sessionData == null) return;
+    if (_zegoConnecting || _sessionData == null) return;
+
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
+
+    // Si AppSign está vacío, jamás conectará.
+    if (kZegoAppSign.trim().isEmpty) {
+      setState(() {
+        _zegoReady = false;
+        _zegoError = 'ZEGO AppSign vacío. Revisa zego_config.dart';
+      });
+      return;
+    }
+
+    // Si ya está listo y sigue logueado como este user, no hagas nada.
+    if (_zegoReady && _isZimLoggedInAs(user.uid)) return;
 
     setState(() {
       _zegoConnecting = true;
       _zegoError = null;
     });
 
-    try {
+    Future<void> attemptOnce() async {
       final data = _sessionData!;
       final myAlias = _resolveMyAlias(data, user.uid);
-      final otherUserId = _resolveOtherUserId(data, user.uid);
-      final token = await _zegoTokenService.fetchToken(
-        userId: user.uid,
-        userName: myAlias,
-      );
 
-      try {
-        await (ZIMKit() as dynamic).connectUser(
-          id: user.uid,
-          name: myAlias,
-          token: token.token,
-        );
-      } catch (_) {
-        await ZIMKit().connectUser(id: user.uid, name: myAlias);
-        try {
-          await (ZIMKit() as dynamic).setToken(token.token);
-        } catch (_) {}
+      // Si ZIM está logueado como OTRO usuario, desconecta primero.
+      if (!_isZimLoggedInAs(user.uid)) {
+        await _disconnectZimSilently();
       }
 
-      await _ensureZegoGroup(
-        groupId: widget.sessionId,
-        groupName: 'session-${widget.sessionId}',
-        userIds: [user.uid, otherUserId],
-      );
+      // ✅ En zego_zimkit, connectUser es Future<void>.
+      await ZIMKit()
+          .connectUser(id: user.uid, name: myAlias)
+          .timeout(const Duration(seconds: 25));
+    }
 
+    try {
+      // Reintento simple (2)
+      for (int i = 0; i < 2; i++) {
+        try {
+          await attemptOnce();
+          if (!mounted) return;
+          setState(() {
+            _zegoReady = true;
+            _zegoError = null;
+          });
+          return;
+        } catch (e) {
+          if (i == 1) rethrow;
+          await Future.delayed(const Duration(milliseconds: 800));
+        }
+      }
+    } on TimeoutException {
       if (!mounted) return;
       setState(() {
-        _zegoToken = token;
-        _zegoReady = true;
+        _zegoReady = false;
+        _zegoError =
+            'Zego tardó demasiado en conectar (red/lentitud del dispositivo). Reintenta.';
       });
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _zegoError = 'No se pudo conectar a Zego: $e';
+        _zegoReady = false;
+        _zegoError = 'No se pudo conectar a Zego (chat): $e';
       });
     } finally {
-      if (mounted) {
-        setState(() => _zegoConnecting = false);
+      if (mounted) setState(() => _zegoConnecting = false);
+    }
+  }
+
+  Future<void> _stopAnyOngoingCallOrInvitation({
+    required String otherUserId,
+    required String otherAlias,
+  }) async {
+    try {
+      final service = ZegoUIKitPrebuiltCallInvitationService();
+      if (!service.isInit) return;
+
+      if (service.isInCall) {
+        try {
+          await service.controller.hangUp(context);
+        } catch (_) {}
       }
-    }
 
-    final data = _sessionData;
-    if (data == null) return;
-    final myAlias = _resolveMyAlias(data, user.uid);
-    final config = video
-        ? ZegoUIKitPrebuiltCallConfig.oneOnOneVideoCall()
-        : ZegoUIKitPrebuiltCallConfig.oneOnOneVoiceCall();
-
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => ZegoUIKitPrebuiltCall(
-          appID: kZegoAppId,
-          userID: user.uid,
-          userName: myAlias,
-          callID: widget.sessionId,
-          token: _zegoToken!.token,
-          config: config,
-        ),
-      ),
-    );
+      if (service.isInCalling) {
+        try {
+          await service.cancel(
+            callees: [ZegoCallUser(otherUserId, otherAlias)],
+          );
+        } catch (_) {}
+      }
+    } catch (_) {}
   }
 
-  void _openCall({required bool video}) {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return;
-    if (!_zegoReady || _zegoToken == null) {
+  Future<void> _sendCallInvitation({
+    required bool isVideo,
+    required String otherUserId,
+    required String otherAlias,
+  }) async {
+    final service = ZegoUIKitPrebuiltCallInvitationService();
+    if (!service.isInit) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('El chat aún se está conectando.'),
+          content: Text(
+            'Llamadas no disponibles: CallInvitationService no está inicializado.',
+          ),
         ),
       );
       return;
     }
 
-    final data = _sessionData;
-    if (data == null) return;
-    final myAlias = _resolveMyAlias(data, user.uid);
-    final config = video
-        ? ZegoUIKitPrebuiltCallConfig.oneOnOneVideoCall()
-        : ZegoUIKitPrebuiltCallConfig.oneOnOneVoiceCall();
-
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => ZegoUIKitPrebuiltCall(
-          appID: kZegoAppId,
-          userID: user.uid,
-          userName: myAlias,
-          callID: widget.sessionId,
-          token: _zegoToken!.token,
-          config: config,
-        ),
-      ),
+    final ok = await service.send(
+      invitees: [ZegoCallUser(otherUserId, otherAlias)],
+      isVideoCall: isVideo,
+      resourceID: kZegoCallInvitationResourceId,
+      timeoutSeconds: 60,
     );
-  }
 
-  void _openCall({required bool video}) {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return;
-    if (!_zegoReady || _zegoToken == null) {
+    if (!mounted) return;
+    if (!ok) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('El chat aún se está conectando.'),
-        ),
+        const SnackBar(content: Text('No se pudo enviar la invitación.')),
       );
-      return;
     }
-
-    final data = _sessionData;
-    if (data == null) return;
-    final myAlias = _resolveMyAlias(data, user.uid);
-    final config = video
-        ? ZegoUIKitPrebuiltCallConfig.oneOnOneVideoCall()
-        : ZegoUIKitPrebuiltCallConfig.oneOnOneVoiceCall();
-
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => ZegoUIKitPrebuiltCall(
-          appID: kZegoAppId,
-          userID: user.uid,
-          userName: myAlias,
-          callID: widget.sessionId,
-          token: _zegoToken!.token,
-          config: config,
-        ),
-      ),
-    );
   }
 
-  void _openCall({required bool video}) {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return;
-    if (!_zegoReady || _zegoToken == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('El chat aún se está conectando.'),
-        ),
-      );
-      return;
-    }
-
-    final data = _sessionData;
-    if (data == null) return;
-    final myAlias = _resolveMyAlias(data, user.uid);
-    final config = video
-        ? ZegoUIKitPrebuiltCallConfig.oneOnOneVideoCall()
-        : ZegoUIKitPrebuiltCallConfig.oneOnOneVoiceCall();
-
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => ZegoUIKitPrebuiltCall(
-          appID: kZegoAppId,
-          userID: user.uid,
-          userName: myAlias,
-          callID: widget.sessionId,
-          token: _zegoToken!.token,
-          config: config,
-        ),
-      ),
-    );
-  }
-
-  // ============================================================
-  // 🔵 FINALIZAR SESIÓN (lógica de cobros manual: botón)
-  // ============================================================
   Future<void> _finishSession() async {
     if (_finishing) return;
 
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
 
-    // Vibración media al finalizar sesión
     HapticFeedback.mediumImpact();
-
     setState(() => _finishing = true);
 
     try {
       final snap = await _sessionRef.get();
       final data = snap.data();
+
       if (data == null) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -378,38 +332,28 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
         return;
       }
 
-      final speakerId = data['speakerId'] as String? ?? '';
+      final speakerId = (data['speakerId'] ?? '').toString();
       final endedBy = user.uid == speakerId ? 'speaker' : 'companion';
 
-      // Duración total contratada (ej. 30 min)
       final durationTotal = data['durationMinutes'] as int? ?? 30;
 
-      // Calcular minutos reales usados (desde createdAt hasta ahora)
       int realMinutes = 0;
       final createdAtTs = data['createdAt'] as Timestamp?;
       if (createdAtTs != null) {
         final createdAt = createdAtTs.toDate();
         final now = DateTime.now();
         final diffMinutes = now.difference(createdAt).inMinutes;
-        if (diffMinutes >= 0) {
-          realMinutes = diffMinutes;
-        }
+        if (diffMinutes >= 0) realMinutes = diffMinutes;
       }
 
-      // 🔒 Candado: nunca más de lo reservado
-      if (realMinutes > durationTotal) {
-        realMinutes = durationTotal;
-      }
+      if (realMinutes > durationTotal) realMinutes = durationTotal;
 
-      // Calcular minutos a cobrar según quién terminó
       int billingMinutes;
       bool minChargeApplied = false;
 
       if (endedBy == 'speaker') {
-        // Si el hablante corta, paga TODO (duración contratada)
         billingMinutes = durationTotal;
       } else {
-        // Si la compañera corta, mínimo 10 min
         if (realMinutes < kMinBillingMinutes) {
           billingMinutes = kMinBillingMinutes;
           minChargeApplied = true;
@@ -431,23 +375,24 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
 
       await _sessionRef.update(updateData);
 
+      final otherUserId = _resolveOtherUserId(data, user.uid);
+      final otherAlias = _resolveOtherAlias(data, user.uid);
+      await _stopAnyOngoingCallOrInvitation(
+        otherUserId: otherUserId,
+        otherAlias: otherAlias,
+      );
+
       try {
         await PaymentsApi().captureSessionPayment(sessionId: widget.sessionId);
         _captureOk = true;
-      } catch (e) {
+      } catch (_) {
         _captureOk = false;
-        debugPrint('Stripe capture fallo: $e');
       }
 
-
-      // Mezclamos los datos antiguos con los nuevos para actualizar la UI
       final mergedData = {...data, ...updateData};
 
       if (mounted) {
-        // Actualizamos _sessionData para que la UI refleje el cambio
-        setState(() {
-          _sessionData = mergedData;
-        });
+        setState(() => _sessionData = mergedData);
 
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -458,7 +403,6 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
             ),
           ),
         );
-
       }
     } catch (e) {
       if (mounted) {
@@ -466,20 +410,17 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
           SnackBar(content: Text('No se pudo finalizar la sesión: $e')),
         );
       }
-    }
- finally {
+    } finally {
       if (mounted) setState(() => _finishing = false);
     }
   }
 
-  // ============================================================
-  // 🔵 AUTO-TIMEOUT (se llama solo desde el reloj cuando se cumple el tiempo)
-  // ============================================================
   Future<void> _autoTimeoutSession() async {
-    if (_autoTimeoutTriggered) return; // seguridad extra
+    if (_autoTimeoutTriggered) return;
     _autoTimeoutTriggered = true;
 
     try {
+      final user = FirebaseAuth.instance.currentUser;
       final snap = await _sessionRef.get();
       final data = snap.data();
       if (data == null) return;
@@ -489,72 +430,68 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
 
       final durationTotal = data['durationMinutes'] as int? ?? 30;
 
-      // En timeout consideramos que se cumplió la duración contratada
-      final realMinutes = durationTotal;
-      final billingMinutes = durationTotal;
-
       final updateData = <String, dynamic>{
         'status': 'completed',
         'endedBy': 'timeout',
         'completedAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
-        'realDurationMinutes': realMinutes,
-        'billingMinutes': billingMinutes,
+        'realDurationMinutes': durationTotal,
+        'billingMinutes': durationTotal,
         'billingMinLimit': kMinBillingMinutes,
         'minChargeApplied': false,
       };
 
       await _sessionRef.update(updateData);
 
+      if (user != null) {
+        final otherUserId = _resolveOtherUserId(data, user.uid);
+        final otherAlias = _resolveOtherAlias(data, user.uid);
+        await _stopAnyOngoingCallOrInvitation(
+          otherUserId: otherUserId,
+          otherAlias: otherAlias,
+        );
+      }
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('La sesión terminó automáticamente.')),
         );
       }
-    } catch (_) {
-      // Si falla, simplemente no hacemos nada más.
-    }
+    } catch (_) {}
   }
 
-  // ============================================================
-  // 🔵 CONFIRMAR FINALIZAR SESIÓN
-  // ============================================================
   Future<void> _confirmFinishSession() async {
     if (_finishing) return;
 
     final shouldEnd =
         await showDialog<bool>(
-          context: context,
-          builder: (context) {
-            return AlertDialog(
-              title: const Text('Finalizar sesión'),
-              content: const Text(
-                '¿Seguro que quieres finalizar la sesión? '
-                'Esta acción no se puede deshacer.',
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(context).pop(false),
-                  child: const Text('Cancelar'),
-                ),
-                ElevatedButton(
-                  onPressed: () => Navigator.of(context).pop(true),
-                  child: const Text('Sí, finalizar'),
-                ),
-              ],
-            );
-          },
-        ) ??
-        false;
+              context: context,
+              builder: (context) {
+                return AlertDialog(
+                  title: const Text('Finalizar sesión'),
+                  content: const Text(
+                    '¿Seguro que quieres finalizar la sesión? '
+                    'Esta acción no se puede deshacer.',
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.of(context).pop(false),
+                      child: const Text('Cancelar'),
+                    ),
+                    ElevatedButton(
+                      onPressed: () => Navigator.of(context).pop(true),
+                      child: const Text('Sí, finalizar'),
+                    ),
+                  ],
+                );
+              },
+            ) ??
+            false;
 
     if (!shouldEnd) return;
-
     await _finishSession();
   }
 
-  // ============================================================
-  // 🔵 UI COMPLETA DE LA SESIÓN
-  // ============================================================
   @override
   Widget build(BuildContext context) {
     final user = FirebaseAuth.instance.currentUser;
@@ -562,7 +499,6 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
       return const Scaffold(body: Center(child: Text('Debes iniciar sesión.')));
     }
 
-    // ⏳ Carga inicial de la sesión
     if (_sessionLoading) {
       return Scaffold(
         appBar: AppBar(title: const Text('Sesión')),
@@ -583,16 +519,16 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
     }
 
     final data = _sessionData!;
-    final status = data['status'] as String? ?? 'active';
+    final status = (data['status'] ?? 'active').toString();
     final endedBy = data['endedBy'] as String?;
     final isActive = status == 'active';
 
-    final speakerAlias = data['speakerAlias'] ?? 'Hablante';
-    final companionAlias = data['companionAlias'] ?? 'Compañera';
+    final speakerAlias = (data['speakerAlias'] ?? 'Hablante').toString();
+    final companionAlias = (data['companionAlias'] ?? 'Compañera').toString();
 
     final price = (data['priceCents'] ?? 0) / 100.0;
     final duration = data['durationMinutes'] as int? ?? 30;
-    final currency = (data['currency'] ?? 'usd').toUpperCase();
+    final currency = (data['currency'] ?? 'usd').toString().toUpperCase();
 
     final realDuration = data['realDurationMinutes'] as int?;
     final billingMinutes = data['billingMinutes'] as int?;
@@ -600,14 +536,17 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
     final billingMinLimit =
         data['billingMinLimit'] as int? ?? kMinBillingMinutes;
 
-    final isSpeakerInSession = data['speakerId'] == user.uid;
-    final otherAlias = isSpeakerInSession ? companionAlias : speakerAlias;
+    final isSpeakerInSession = (data['speakerId'] ?? '').toString() == user.uid;
 
-    // createdAt para el reloj
+    final otherUserId = _resolveOtherUserId(data, user.uid);
+    final otherAlias = _resolveOtherAlias(data, user.uid);
+
+    // ✅ 1 a 1 REAL:
+    final peerConversationId = otherUserId;
+
     final createdAtTs = data['createdAt'] as Timestamp?;
     final createdAt = createdAtTs?.toDate();
 
-    // Label de estado amigable
     String statusLabel;
     if (status == 'active') {
       statusLabel = 'Activa';
@@ -625,7 +564,6 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
       statusLabel = status;
     }
 
-    // Texto de duración compacto (cuando ya terminó)
     String durationText;
     if (!isActive && realDuration != null && billingMinutes != null) {
       if (minChargeApplied) {
@@ -641,7 +579,8 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
       durationText = 'Reservada: $duration min';
     }
 
-    // ⛔ BLOQUEAR BACK mientras la sesión está activa
+    final callService = ZegoUIKitPrebuiltCallInvitationService();
+
     return WillPopScope(
       onWillPop: () async {
         if (isActive) {
@@ -663,17 +602,26 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
           title: Text(isActive ? otherAlias : 'Sesión finalizada'),
           centerTitle: true,
           actions: [
-            // Placeholder llamada de voz
-            IconButton(
-              icon: const Icon(Icons.call),
-              onPressed: isActive ? () => _openCall(video: false) : null,
-            ),
-            // Placeholder videollamada
-            IconButton(
-              icon: const Icon(Icons.videocam),
-              onPressed: isActive ? () => _openCall(video: true) : null,
-            ),
-            // Botón pequeño para finalizar sesión (solo si está activa)
+            if (isActive && callService.isInit)
+              IconButton(
+                tooltip: 'Llamada',
+                icon: const Icon(Icons.call),
+                onPressed: () => _sendCallInvitation(
+                  isVideo: false,
+                  otherUserId: otherUserId,
+                  otherAlias: otherAlias,
+                ),
+              ),
+            if (isActive && callService.isInit)
+              IconButton(
+                tooltip: 'Videollamada',
+                icon: const Icon(Icons.videocam),
+                onPressed: () => _sendCallInvitation(
+                  isVideo: true,
+                  otherUserId: otherUserId,
+                  otherAlias: otherAlias,
+                ),
+              ),
             if (isActive)
               IconButton(
                 icon: _finishing
@@ -690,9 +638,6 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
         ),
         body: Column(
           children: [
-            // ======================================================
-            // 🔸 HEADER PEQUEÑO DE SESIÓN
-            // ======================================================
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
               child: Row(
@@ -731,17 +676,17 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
-                      // ⏱️ Reloj visual + auto-timeout
                       if (isActive && createdAt != null)
                         StreamBuilder<int>(
-                          stream: Stream.periodic(const Duration(seconds: 1), (
-                            _,
-                          ) {
-                            final diff = DateTime.now()
-                                .difference(createdAt)
-                                .inSeconds;
-                            return diff < 0 ? 0 : diff;
-                          }),
+                          stream: Stream.periodic(
+                            const Duration(seconds: 1),
+                            (_) {
+                              final diff = DateTime.now()
+                                  .difference(createdAt)
+                                  .inSeconds;
+                              return diff < 0 ? 0 : diff;
+                            },
+                          ),
                           builder: (context, snapshot) {
                             final totalSeconds = snapshot.data ?? 0;
                             final hours = totalSeconds ~/ 3600;
@@ -751,16 +696,15 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
                             String formatted;
                             if (hours > 0) {
                               formatted =
-                                  '${hours.toString().padLeft(2, '0')}'
-                                  ':${minutes.toString().padLeft(2, '0')}'
-                                  ':${seconds.toString().padLeft(2, '0')}';
+                                  '${hours.toString().padLeft(2, '0')}:'
+                                  '${minutes.toString().padLeft(2, '0')}:'
+                                  '${seconds.toString().padLeft(2, '0')}';
                             } else {
                               formatted =
-                                  '${minutes.toString().padLeft(2, '0')}'
-                                  ':${seconds.toString().padLeft(2, '0')}';
+                                  '${minutes.toString().padLeft(2, '0')}:'
+                                  '${seconds.toString().padLeft(2, '0')}';
                             }
 
-                            // 🔥 Auto-timeout: cuando se cumple la duración
                             final sessionTotalSeconds = duration * 60;
                             if (isActive &&
                                 !_autoTimeoutTriggered &&
@@ -791,7 +735,8 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
                         statusLabel,
                         style: TextStyle(
                           fontSize: 11,
-                          color: isActive ? Colors.greenAccent : Colors.redAccent,
+                          color:
+                              isActive ? Colors.greenAccent : Colors.redAccent,
                         ),
                       ),
                     ],
@@ -800,12 +745,10 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
               ),
             ),
 
-            // ======================================================
-            // 🔸 BARRA DE PROGRESO DE LA SESIÓN (✅ FIX COLOR / TRACK)
-            // ======================================================
             if (isActive && createdAt != null)
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                 child: StreamBuilder<int>(
                   stream: Stream.periodic(const Duration(seconds: 1), (_) {
                     final diff = DateTime.now().difference(createdAt).inSeconds;
@@ -834,9 +777,7 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
                           child: LinearProgressIndicator(
                             value: progress,
                             minHeight: 6,
-                            // ✅ en lugar del verde del theme
                             color: const Color(0xFF4F46E5),
-                            // ✅ track neutro (evita que se vea “relleno” desde inicio)
                             backgroundColor: Colors.white12,
                           ),
                         ),
@@ -844,7 +785,10 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
                         Text(
                           'Progreso de la sesión: $percent%',
                           textAlign: TextAlign.right,
-                          style: const TextStyle(fontSize: 11, color: Colors.grey),
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: Colors.grey,
+                          ),
                         ),
                       ],
                     );
@@ -852,12 +796,10 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
                 ),
               ),
 
-            // ======================================================
-            // 🔸 AVISO LÍMITES (✅ SOLO COMPAÑERA, CERRABLE)
-            // ======================================================
             if (isActive && !isSpeakerInSession && _showSafetyHint)
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                 child: Stack(
                   children: [
                     _buildSafetyHintForCompanion(),
@@ -873,12 +815,10 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
                 ),
               ),
 
-            // ======================================================
-            // 🔸 AVISO DE REGLA DE COBRO (con botón de cerrar)
-            // ======================================================
             if (isActive && _showBillingHint)
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                 child: Stack(
                   children: [
                     _buildBillingHint(isSpeakerInSession),
@@ -886,11 +826,7 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
                       right: 4,
                       top: 4,
                       child: InkWell(
-                        onTap: () {
-                          setState(() {
-                            _showBillingHint = false;
-                          });
-                        },
+                        onTap: () => setState(() => _showBillingHint = false),
                         child: const Icon(Icons.close, size: 16),
                       ),
                     ),
@@ -898,37 +834,88 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
                 ),
               ),
 
-            Expanded(child: _buildZegoChat(isActive: isActive)),
+            Expanded(
+              child: _buildZegoChat(
+                isActive: isActive,
+                peerConversationId: peerConversationId,
+              ),
+            ),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildZegoChat({required bool isActive}) {
+  Widget _buildZegoChat({
+    required bool isActive,
+    required String peerConversationId,
+  }) {
+    final u = FirebaseAuth.instance.currentUser;
+    final zimLogged = u != null && _isZimLoggedInAs(u.uid);
+
     if (_zegoError != null) {
       return Center(
-        child: Text(
-          _zegoError!,
-          textAlign: TextAlign.center,
-          style: const TextStyle(color: Colors.redAccent),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              _zegoError!,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.redAccent),
+            ),
+            const SizedBox(height: 10),
+            ElevatedButton(
+              onPressed: _zegoConnecting ? null : _ensureZegoReady,
+              child: Text(_zegoConnecting ? 'Conectando...' : 'Reintentar'),
+            ),
+          ],
         ),
       );
     }
 
-    if (!_zegoReady) {
-      return const Center(child: CircularProgressIndicator());
+    if (!_zegoReady || _zegoConnecting || !zimLogged) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const CircularProgressIndicator(),
+            const SizedBox(height: 12),
+            Text(
+              zimLogged ? 'Cargando chat…' : 'Conectando chat…',
+              style: const TextStyle(color: Colors.white70),
+            ),
+            const SizedBox(height: 12),
+            TextButton(
+              onPressed: _zegoConnecting ? null : _ensureZegoReady,
+              child: const Text('Reconectar'),
+            ),
+          ],
+        ),
+      );
     }
 
-    Widget chatBody = ZIMKitMessageListPage(
-      conversationID: widget.sessionId,
-      conversationType: ZIMConversationType.group,
+    final messages = ZIMKitMessageListView(
+      conversationID: peerConversationId,
+      conversationType: ZIMConversationType.peer,
+      scrollController: _listScrollController,
+    );
+
+    final input = ZIMKitMessageInput(
+      conversationID: peerConversationId,
+      conversationType: ZIMConversationType.peer,
+      recordStatus: _recordStatus,
+      listScrollController: _listScrollController,
     );
 
     if (!isActive) {
-      chatBody = Stack(
+      return Stack(
         children: [
-          AbsorbPointer(child: chatBody),
+          Column(
+            children: [
+              Expanded(child: AbsorbPointer(child: messages)),
+              AbsorbPointer(child: input),
+            ],
+          ),
           const Center(
             child: Text(
               'Sesión finalizada.',
@@ -939,20 +926,24 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
       );
     }
 
-    return chatBody;
+    return Column(
+      children: [
+        Expanded(child: messages),
+        input,
+      ],
+    );
   }
 
-  // ============================================================
-  // 🔵 Mensaje visual con reglas de cobro según rol
-  // ============================================================
   Widget _buildBillingHint(bool isSpeaker) {
     final icon = isSpeaker ? Icons.warning_amber_rounded : Icons.info;
-    final bgColor =
-        isSpeaker ? Colors.red.withOpacity(0.12) : Colors.green.withOpacity(0.12);
+    final bgColor = isSpeaker
+        ? Colors.red.withOpacity(0.12)
+        : Colors.green.withOpacity(0.12);
     final borderColor = isSpeaker ? Colors.redAccent : Colors.greenAccent;
 
-    final title =
-        isSpeaker ? 'Importante para ti (hablante)' : 'Importante para ti (compañera)';
+    final title = isSpeaker
+        ? 'Importante para ti (hablante)'
+        : 'Importante para ti (compañera)';
 
     final text = isSpeaker
         ? 'Si tú terminas la sesión antes de tiempo, se cobra el total de minutos reservados.'
@@ -976,7 +967,10 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
               children: [
                 Text(
                   title,
-                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
                 const SizedBox(height: 2),
                 Text(text, style: const TextStyle(fontSize: 11)),
@@ -988,9 +982,6 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
     );
   }
 
-  // ============================================================
-  // ✅ Aviso para la compañera: límites y cierre de conversación
-  // ============================================================
   Widget _buildSafetyHintForCompanion() {
     const title = 'Antes de iniciar (para ti, compañera)';
     const text =
@@ -1002,7 +993,9 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
       decoration: BoxDecoration(
         color: const Color(0xFF4F46E5).withOpacity(0.12),
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFF4F46E5).withOpacity(0.55)),
+        border: Border.all(
+          color: const Color(0xFF4F46E5).withOpacity(0.55),
+        ),
       ),
       padding: const EdgeInsets.fromLTRB(10, 8, 22, 8),
       child: const Row(

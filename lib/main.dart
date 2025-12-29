@@ -1,8 +1,16 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+
+// ZIMKit (chat)
 import 'package:zego_zimkit/zego_zimkit.dart';
+
+// Call Invitation
+import 'package:zego_uikit/zego_uikit.dart';
+import 'package:zego_uikit_prebuilt_call/zego_uikit_prebuilt_call.dart';
+import 'package:zego_uikit_signaling_plugin/zego_uikit_signaling_plugin.dart';
 
 import 'firebase_options.dart';
 import 'screens/auth_screen.dart';
@@ -11,13 +19,34 @@ import 'screens/lissen_home.dart';
 import 'features/sessions/ui/session_screen.dart';
 import 'screens/global_session_rating_listener.dart';
 import 'features/zego/zego_config.dart';
-
 import 'theme/chat_theme.dart';
+
+final GlobalKey<NavigatorState> _zegoNavigatorKey = GlobalKey<NavigatorState>();
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
-  ZIMKit().init(appID: kZegoAppId);
+
+  // ✅ Requerido por Zego Call Invitation (para navegar al aceptar)
+  ZegoUIKitPrebuiltCallInvitationService().setNavigatorKey(_zegoNavigatorKey);
+
+  // ✅ Recomendado por Zego (system calling UI / background)
+  try {
+    await ZegoUIKit().initLog();
+    await ZegoUIKitPrebuiltCallInvitationService().useSystemCallingUI(
+      [ZegoUIKitSignalingPlugin()],
+    );
+  } catch (e, st) {
+    debugPrint('⚠️ Zego useSystemCallingUI falló: $e\n$st');
+  }
+
+  // ✅ No dejamos que un problema de ZIMKit rompa login
+  try {
+    await ZIMKit().init(appID: kZegoAppId, appSign: kZegoAppSign);
+  } catch (e, st) {
+    debugPrint('⚠️ ZIMKit init falló (la app seguirá corriendo): $e\n$st');
+  }
+
   runApp(const LissenApp());
 }
 
@@ -30,21 +59,22 @@ class LissenApp extends StatelessWidget {
       begin: Alignment.topLeft,
       end: Alignment.bottomRight,
       colors: [
-        Color(0xFF020617), // slate-950
-        Color(0xFF0B1B4D), // deep blue
-        Color(0xFF0F172A), // slate-900
+        Color(0xFF020617),
+        Color(0xFF0B1B4D),
+        Color(0xFF0F172A),
       ],
     );
 
     return MaterialApp(
       debugShowCheckedModeBanner: false,
 
-      // ✅ Tema (tuya)
+      // ✅ navigatorKey para Call Invitation
+      navigatorKey: _zegoNavigatorKey,
+
       theme: ChatTheme.dark(),
       darkTheme: ChatTheme.dark(),
       themeMode: ThemeMode.system,
 
-      // ✅ Fondo global
       builder: (context, child) {
         return Container(
           decoration: const BoxDecoration(gradient: bgGradient),
@@ -57,9 +87,6 @@ class LissenApp extends StatelessWidget {
   }
 }
 
-/// Escucha el estado de Firebase Auth.
-/// Si no hay usuario -> AuthScreen
-/// Si hay usuario -> _RootController envuelto con GlobalSessionRatingListener
 class _AuthGate extends StatelessWidget {
   const _AuthGate({super.key});
 
@@ -76,25 +103,85 @@ class _AuthGate extends StatelessWidget {
 
         final user = snap.data;
 
-        // 🔴 Sin usuario: mostrar tu pantalla real de login/registro
         if (user == null) {
+          // Si no hay usuario, aseguramos des-inicializar
+          // (evita notificaciones “fantasma” después de logout)
+          ZegoUIKitPrebuiltCallInvitationService().uninit();
           return const AuthScreen();
         }
 
-        // 🟢 Con usuario: montamos el listener global alrededor del root
-        return GlobalSessionRatingListener(
-          child: _RootController(userId: user.uid),
+        return _ZegoCallBootstrapper(
+          uid: user.uid,
+          child: GlobalSessionRatingListener(
+            child: _RootController(userId: user.uid),
+          ),
         );
       },
     );
   }
 }
 
-/// Mira el documento en 'users/{uid}' y decide:
-/// - si falta onboarding -> OnboardingScreen
-/// - si ya está listo   ->
-///     - si hay sesión activa -> SessionConversationScreen (LOCK-IN)
-///     - si no hay sesión     -> LissenHome
+/// Inicializa Call Invitation justo después del login (1 vez)
+class _ZegoCallBootstrapper extends StatefulWidget {
+  final String uid;
+  final Widget child;
+
+  const _ZegoCallBootstrapper({required this.uid, required this.child});
+
+  @override
+  State<_ZegoCallBootstrapper> createState() => _ZegoCallBootstrapperState();
+}
+
+class _ZegoCallBootstrapperState extends State<_ZegoCallBootstrapper> {
+  bool _inited = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _init();
+  }
+
+  Future<void> _init() async {
+    if (_inited) return;
+    _inited = true;
+
+    // nombre para mostrar (si tienes alias en users/{uid}, puedes tomarlo de ahí)
+    String name = FirebaseAuth.instance.currentUser?.displayName ?? 'Usuario';
+
+    try {
+      final userDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(widget.uid)
+          .get();
+      final data = userDoc.data();
+      final alias = (data?['alias'] ?? data?['displayName'] ?? '').toString();
+      if (alias.trim().isNotEmpty) name = alias.trim();
+    } catch (_) {}
+
+    try {
+      // OJO: esto debe correr tras login SIEMPRE (auto-login incluido) :contentReference[oaicite:6]{index=6}
+      await ZegoUIKitPrebuiltCallInvitationService().init(
+        appID: kZegoAppId,
+        appSign: kZegoAppSign,
+        userID: widget.uid,
+        userName: name,
+        plugins: [ZegoUIKitSignalingPlugin()],
+      );
+    } catch (e, st) {
+      debugPrint('⚠️ Call Invitation init falló: $e\n$st');
+    }
+  }
+
+  @override
+  void dispose() {
+    // No uninit aquí: solo en logout. (si lo haces aquí, se rompe al navegar)
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
+}
+
 class _RootController extends StatelessWidget {
   final String userId;
 
@@ -124,8 +211,6 @@ class _RootController extends StatelessWidget {
           );
         }
 
-        // 👇 Si no existe el documento en 'users/{userId}',
-        // lo creamos vacío y mandamos a Onboarding.
         if (!snap.hasData || !snap.data!.exists) {
           FirebaseFirestore.instance.collection('users').doc(userId).set({
             'uid': userId,
@@ -145,7 +230,6 @@ class _RootController extends StatelessWidget {
           );
         }
 
-        // 🔥 LOCK-IN solo depende de sessions, aquí sí usamos StreamBuilder
         return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
           stream: FirebaseFirestore.instance
               .collection('sessions')

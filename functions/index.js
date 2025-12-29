@@ -12,7 +12,7 @@
   const db = getFirestore();
 
   // 🔥 Se ejecuta cuando se crea una foto o video en la galería
-  exports.onGalleryItemCreated = onDocumentCreated(
+  exports.onGalleryItemCreatedV2 = onDocumentCreated(
     "users/{uid}/gallery/{mediaId}",
     async (event) => {
       const snap = event.data;

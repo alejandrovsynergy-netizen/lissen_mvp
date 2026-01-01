@@ -15,6 +15,7 @@ Future<bool?> showCreateOfferDialog({
   String? bio,
   String? offerId, // si viene -> edición
   Map<String, dynamic>? initialData,
+  String? prefillCompanionCode,
 }) async {
   return showDialog<bool>(
     context: context,
@@ -29,6 +30,7 @@ Future<bool?> showCreateOfferDialog({
       bio: bio ?? '',
       offerId: offerId,
       initialData: initialData,
+      prefillCompanionCode: prefillCompanionCode,
     ),
   );
 }
@@ -43,6 +45,7 @@ class _CreateOfferDialog extends StatefulWidget {
 
   final String? offerId;
   final Map<String, dynamic>? initialData;
+  final String? prefillCompanionCode;
 
   const _CreateOfferDialog({
     required this.userId,
@@ -53,6 +56,7 @@ class _CreateOfferDialog extends StatefulWidget {
     required this.bio,
     this.offerId,
     this.initialData,
+    this.prefillCompanionCode,
   });
 
   @override
@@ -136,6 +140,11 @@ class _CreateOfferDialogState extends State<_CreateOfferDialog> {
 
       _descC.text = (d['description'] ?? '').toString();
       _companionCodeC.text = (d['companionCode'] ?? '').toString();
+    }
+
+    final prefill = widget.prefillCompanionCode?.trim() ?? '';
+    if (_companionCodeC.text.trim().isEmpty && prefill.isNotEmpty) {
+      _companionCodeC.text = prefill;
     }
 
     // Siempre recalcular al abrir (como definiste)

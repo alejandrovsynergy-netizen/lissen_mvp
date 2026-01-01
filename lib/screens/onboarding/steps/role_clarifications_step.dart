@@ -29,7 +29,7 @@ class RoleClarificationsStep extends StatelessWidget {
             children: const [
               OnboardingTitle(
                 title: 'Antes de continuar',
-                subtitle: 'Primero elige si eres hablante o compañera.',
+                subtitle: 'Primero elige si eres usuario o compañera.',
               ),
               Text('Toca "Atrás", selecciona tu rol y luego vuelve a este paso.'),
             ],

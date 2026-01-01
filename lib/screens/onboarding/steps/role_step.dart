@@ -30,7 +30,7 @@ class RoleStep extends StatelessWidget {
             ),
             RoleCard(
               selected: role == 'speaker',
-              title: 'Hablante',
+              title: 'Usuario',
               subtitle: 'Publicar ofertas y encontrar compañía.',
               icon: Icons.chat_bubble_outline,
               onTap: () {

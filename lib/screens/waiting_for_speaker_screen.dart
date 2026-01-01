@@ -120,7 +120,7 @@ class _WaitingForSpeakerScreenState extends State<WaitingForSpeakerScreen> {
             _countdownTimer?.cancel();
 
             await _showInfoAndPop(
-              'El hablante no aceptó tu solicitud.\n'
+              'El usuario no aceptó tu solicitud.\n'
               'Esta oferta volvió a estar disponible.',
             );
             return;
@@ -187,7 +187,7 @@ class _WaitingForSpeakerScreenState extends State<WaitingForSpeakerScreen> {
         });
 
     await _showInfoAndPop(
-      'El hablante no respondió a tiempo.\n'
+      'El usuario no respondió a tiempo.\n'
       'La solicitud fue cancelada y la oferta volvió a estar disponible.',
     );
   }
@@ -355,7 +355,7 @@ class _WaitingForSpeakerScreenState extends State<WaitingForSpeakerScreen> {
                 ),
                 const SizedBox(height: 12),
                 const Text(
-                  'No puedes navegar mientras el hablante decide.\n'
+                  'No puedes navegar mientras el usuario decide.\n'
                   'Si se cierra la app, volverás a esta pantalla al regresar.',
                   textAlign: TextAlign.center,
                   style: TextStyle(fontSize: 13, color: Colors.grey),

@@ -76,9 +76,19 @@ class LissenApp extends StatelessWidget {
       themeMode: ThemeMode.system,
 
       builder: (context, child) {
+        final media = MediaQuery.of(context);
         return Container(
           decoration: const BoxDecoration(gradient: bgGradient),
-          child: child ?? const SizedBox.shrink(),
+          child: SafeArea(
+            top: false,
+            bottom: true,
+            child: MediaQuery(
+              data: media.copyWith(
+                padding: media.padding.copyWith(bottom: 0),
+              ),
+              child: child ?? const SizedBox.shrink(),
+            ),
+          ),
         );
       },
 

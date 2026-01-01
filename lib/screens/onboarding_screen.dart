@@ -312,6 +312,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         aliasC: _aliasC,
         ageC: _ageC,
         bioC: _bioC,
+        role: _role,
         photoUrl: _photoUrl,
         photoBytes: _photoBytes,
         uploadingPhoto: _uploadingPhoto,

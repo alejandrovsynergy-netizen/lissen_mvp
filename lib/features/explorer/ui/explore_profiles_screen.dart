@@ -177,13 +177,17 @@ class _ExploreProfilesScreenState extends State<ExploreProfilesScreen> {
                     .whereType<QueryDocumentSnapshot<Map<String, dynamic>>>()
                     .toList();
 
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Padding(
-                      padding: EdgeInsets.fromLTRB(16, 12, 16, 6),
-                      child: _ExploreHeader(),
-                    ),
+                final bottomInset = MediaQuery.of(context).padding.bottom + 90;
+
+                return Padding(
+                  padding: EdgeInsets.only(bottom: bottomInset),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Padding(
+                        padding: EdgeInsets.fromLTRB(16, 12, 16, 6),
+                        child: _ExploreHeader(),
+                      ),
 
                     if (!hasMyGeo)
                       Padding(
@@ -344,7 +348,8 @@ class _ExploreProfilesScreenState extends State<ExploreProfilesScreen> {
                           },
                         ),
                       ),
-                  ],
+                    ],
+                  ),
                 );
               },
             );

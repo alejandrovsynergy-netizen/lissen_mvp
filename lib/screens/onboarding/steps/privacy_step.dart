@@ -2,14 +2,14 @@ import 'package:flutter/material.dart';
 import '../onboarding_ui.dart';
 import '../../profile/legal_texts.dart';
 
-class TermsStep extends StatelessWidget {
-  final bool termsAccepted;
-  final ValueChanged<bool> onTermsChanged;
+class PrivacyStep extends StatelessWidget {
+  final bool privacyAccepted;
+  final ValueChanged<bool> onPrivacyChanged;
 
-  const TermsStep({
+  const PrivacyStep({
     super.key,
-    required this.termsAccepted,
-    required this.onTermsChanged,
+    required this.privacyAccepted,
+    required this.onPrivacyChanged,
   });
 
   @override
@@ -24,22 +24,22 @@ class TermsStep extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const OnboardingTitle(
-              title: 'Terminos y condiciones',
-              subtitle: 'Lee y acepta los terminos para continuar.',
+              title: 'Aviso de privacidad',
+              subtitle: 'Lee y acepta el aviso para continuar.',
             ),
             const Text(
-              'Estos son los terminos de uso de Lissen.',
+              'Este aviso explica como usamos tus datos.',
             ),
             const SizedBox(height: 16),
             const _LegalSection(
-              title: 'Terminos y condiciones',
-              text: kTermsAndConditionsText,
+              title: 'Aviso de privacidad',
+              text: kPrivacyNoticeText,
             ),
             CheckboxListTile(
-              value: termsAccepted,
-              onChanged: (v) => onTermsChanged(v ?? false),
+              value: privacyAccepted,
+              onChanged: (v) => onPrivacyChanged(v ?? false),
               title: const Text(
-                'Acepto los Terminos y Condiciones.',
+                'Acepto el Aviso de Privacidad.',
               ),
             ),
           ],

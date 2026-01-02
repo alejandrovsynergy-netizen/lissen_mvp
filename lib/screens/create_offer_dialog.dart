@@ -5,7 +5,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import '../features/payments/speaker_payment_method.dart';
 
-Future<bool?> showCreateOfferDialog({
+Future<String?> showCreateOfferDialog({
   required BuildContext context,
   required String userId,
   required String alias,
@@ -16,8 +16,10 @@ Future<bool?> showCreateOfferDialog({
   String? offerId, // si viene -> edición
   Map<String, dynamic>? initialData,
   String? prefillCompanionCode,
+  bool createdFromExplore = false,
+  String? targetCompanionId,
 }) async {
-  return showDialog<bool>(
+  return showDialog<String?>(
     context: context,
     barrierDismissible: false,
     barrierColor: Colors.black.withOpacity(0.25),
@@ -31,6 +33,8 @@ Future<bool?> showCreateOfferDialog({
       offerId: offerId,
       initialData: initialData,
       prefillCompanionCode: prefillCompanionCode,
+      createdFromExplore: createdFromExplore,
+      targetCompanionId: targetCompanionId,
     ),
   );
 }
@@ -46,6 +50,8 @@ class _CreateOfferDialog extends StatefulWidget {
   final String? offerId;
   final Map<String, dynamic>? initialData;
   final String? prefillCompanionCode;
+  final bool createdFromExplore;
+  final String? targetCompanionId;
 
   const _CreateOfferDialog({
     required this.userId,
@@ -57,6 +63,8 @@ class _CreateOfferDialog extends StatefulWidget {
     this.offerId,
     this.initialData,
     this.prefillCompanionCode,
+    this.createdFromExplore = false,
+    this.targetCompanionId,
   });
 
   @override
@@ -86,6 +94,8 @@ class _CreateOfferDialogState extends State<_CreateOfferDialog> {
   bool _showAutoAmountHint = false;
   Timer? _hintTimer;
   bool _settingAmountProgrammatically = false;
+  Timer? _codeDebounce;
+  final Map<String, Map<String, int>> _companionRatesCache = {};
 
   // ============================
   // ERRORES VISIBLES
@@ -147,13 +157,15 @@ class _CreateOfferDialogState extends State<_CreateOfferDialog> {
       _companionCodeC.text = prefill;
     }
 
-    // Siempre recalcular al abrir (como definiste)
+    _companionCodeC.addListener(_onCompanionCodeChanged);
     _recalculateAmount(showHint: false);
   }
 
   @override
   void dispose() {
     _hintTimer?.cancel();
+    _codeDebounce?.cancel();
+    _companionCodeC.removeListener(_onCompanionCodeChanged);
     _descC.dispose();
     _amountC.dispose();
     _companionCodeC.dispose();
@@ -174,11 +186,9 @@ class _CreateOfferDialogState extends State<_CreateOfferDialog> {
     }
   }
 
-  void _recalculateAmount({bool showHint = true}) {
-    final suggested = _computeSuggestedAmount();
-
+  void _setAmount(int amount, {bool showHint = true}) {
     _settingAmountProgrammatically = true;
-    _amountC.text = suggested.toString();
+    _amountC.text = amount.toString();
     _settingAmountProgrammatically = false;
 
     if (showHint) {
@@ -190,25 +200,136 @@ class _CreateOfferDialogState extends State<_CreateOfferDialog> {
     }
   }
 
-  // ============================
-  // VALIDACIÓN CÓDIGO COMPAÑERA
-  // ============================
-  Future<bool> _companionCodeExists(String code) async {
+  void _recalculateAmount({bool showHint = true}) {
+    _applyCompanionRateIfAny(showHint: showHint);
+  }
+
+  void _onCompanionCodeChanged() {
+    if (_settingAmountProgrammatically) return;
+    _codeDebounce?.cancel();
+    _codeDebounce = Timer(const Duration(milliseconds: 450), () {
+      if (!mounted) return;
+      _applyCompanionRateIfAny(showHint: true);
+    });
+  }
+
+  Future<Map<String, int>?> _getCompanionRatesForCode(String code) async {
+    if (_companionRatesCache.containsKey(code)) {
+      return _companionRatesCache[code];
+    }
+
     final snap = await FirebaseFirestore.instance
         .collection('users')
         .where('companionCode', isEqualTo: code)
         .limit(1)
         .get();
 
-    if (snap.docs.isEmpty) return false;
+    if (snap.docs.isEmpty) return null;
 
-    // si existe role, reforzamos que sea companion (no rompe si no existe)
     final data = snap.docs.first.data();
     final role = (data['role'] as String?)?.toLowerCase();
-    if (role != null && role.isNotEmpty && role != 'companion') {
-      return false;
+    if (role != 'companion') return null;
+
+    final confirmedAt = data['ratesLastConfirmedAt'];
+    if (confirmedAt == null) return null;
+
+    final map = <String, int>{};
+    if (data['rateChat15Cents'] is int) {
+      map['chat'] = data['rateChat15Cents'] as int;
     }
-    return true;
+    if (data['rateVoice15Cents'] is int) {
+      map['voice'] = data['rateVoice15Cents'] as int;
+    }
+    if (data['rateVideo15Cents'] is int) {
+      map['video'] = data['rateVideo15Cents'] as int;
+    }
+
+    if (map.isEmpty) return null;
+    _companionRatesCache[code] = map;
+    return map;
+  }
+
+  Future<void> _applyCompanionRateIfAny({bool showHint = true}) async {
+    final suggested = _computeSuggestedAmount();
+    int amount = suggested;
+
+    final code = _companionCodeC.text.trim();
+    if (code.isNotEmpty && _durationMinutes % 15 == 0) {
+      final rates = await _getCompanionRatesForCode(code);
+      if (rates != null) {
+        final rate15 = rates[_type];
+        if (rate15 != null && rate15 > 0) {
+          final totalCents = rate15 * (_durationMinutes ~/ 15);
+          final computed = totalCents ~/ 100;
+          if (computed > 0) amount = computed;
+        }
+      }
+    }
+
+    _setAmount(amount, showHint: showHint);
+  }
+
+  Future<int> _resolveAmountForSave() async {
+    int amountPesos = int.parse(_amountC.text.trim());
+    final code = _companionCodeC.text.trim();
+    if (code.isNotEmpty && _durationMinutes % 15 == 0) {
+      final rates = await _getCompanionRatesForCode(code);
+      if (rates != null) {
+        final rate15 = rates[_type];
+        if (rate15 != null && rate15 > 0) {
+          final totalCents = rate15 * (_durationMinutes ~/ 15);
+          final computed = totalCents ~/ 100;
+          if (computed > 0 && computed != amountPesos) {
+            amountPesos = computed;
+            _setAmount(amountPesos, showHint: false);
+          }
+        }
+      }
+    }
+    return amountPesos;
+  }
+
+  // ============================
+  // VALIDACIÓN CÓDIGO COMPAÑERA
+  // ============================
+  Future<String?> _validateCompanionCode(String code) async {
+    final snap = await FirebaseFirestore.instance
+        .collection('users')
+        .where('companionCode', isEqualTo: code)
+        .limit(1)
+        .get();
+
+    if (snap.docs.isEmpty) return 'Codigo de companera no valido';
+
+    final doc = snap.docs.first;
+    final data = doc.data();
+    final role = (data['role'] as String?)?.toLowerCase();
+    if (role != null && role.isNotEmpty && role != 'companion') {
+      return 'Codigo de companera no valido';
+    }
+
+    final blockedByCompanion = (data['blockedUsers'] as List<dynamic>?)
+            ?.map((e) => e.toString())
+            .contains(widget.userId) ==
+        true;
+    if (blockedByCompanion) {
+      return 'Esta companera te bloqueo.';
+    }
+
+    final meSnap = await FirebaseFirestore.instance
+        .collection('users')
+        .doc(widget.userId)
+        .get();
+    final meData = meSnap.data() ?? {};
+    final blockedByMe = (meData['blockedUsers'] as List<dynamic>?)
+            ?.map((e) => e.toString())
+            .contains(doc.id) ==
+        true;
+    if (blockedByMe) {
+      return 'Has bloqueado a esta companera.';
+    }
+
+    return null;
   }
 
   // ============================
@@ -256,9 +377,9 @@ class _CreateOfferDialogState extends State<_CreateOfferDialog> {
 
     final code = _companionCodeC.text.trim();
     if (code.isNotEmpty) {
-      final exists = await _companionCodeExists(code);
-      if (!exists) {
-        _companionCodeError = 'Código de compañera no válido';
+      final error = await _validateCompanionCode(code);
+      if (error != null) {
+        _companionCodeError = error;
         ok = false;
       }
     }
@@ -279,7 +400,7 @@ class _CreateOfferDialogState extends State<_CreateOfferDialog> {
     setState(() => _saving = true);
 
     try {
-      final amountPesos = int.parse(_amountC.text.trim());
+      final amountPesos = await _resolveAmountForSave();
 
       final existingStatus = (widget.initialData?['status'] ?? '').toString();
       final bool shouldGatePayment =
@@ -324,20 +445,29 @@ class _CreateOfferDialogState extends State<_CreateOfferDialog> {
       };
 
       if (widget.offerId == null) {
+        if (widget.createdFromExplore) {
+          data['createdFrom'] = 'explore';
+          final target = widget.targetCompanionId?.trim() ?? '';
+          if (target.isNotEmpty) {
+            data['targetCompanionId'] = target;
+          }
+        }
         data['createdAt'] = FieldValue.serverTimestamp();
         data['status'] = publishStatus; // active o payment_required
-        await FirebaseFirestore.instance.collection('offers').add(data);
+        final docRef =
+            await FirebaseFirestore.instance.collection('offers').add(data);
+
+        if (!mounted) return;
+        Navigator.pop(context, docRef.id);
       } else {
         await FirebaseFirestore.instance
             .collection('offers')
             .doc(widget.offerId)
             .update(data);
+        if (!mounted) return;
+        Navigator.pop(context, widget.offerId);
       }
 
-      if (!mounted) return;
-
-      // Importante: devolvemos true para que OffersPage muestre éxito (no aquí)
-      Navigator.pop(context, true);
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(
@@ -727,7 +857,7 @@ class _CreateOfferDialogState extends State<_CreateOfferDialog> {
     return Row(
       children: [
         TextButton(
-          onPressed: _saving ? null : () => Navigator.pop(context, false),
+          onPressed: _saving ? null : () => Navigator.pop(context, null),
           child: const Text('Cancelar'),
         ),
         const Spacer(),

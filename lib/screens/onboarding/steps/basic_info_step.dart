@@ -5,6 +5,7 @@ import '../onboarding_ui.dart';
 class BasicInfoStep extends StatefulWidget {
   final TextEditingController aliasC;
   final TextEditingController ageC;
+  final TextEditingController phoneC;
   final TextEditingController bioC;
 
   final String? role;
@@ -17,6 +18,7 @@ class BasicInfoStep extends StatefulWidget {
     super.key,
     required this.aliasC,
     required this.ageC,
+    required this.phoneC,
     required this.bioC,
     required this.role,
     required this.photoUrl,
@@ -100,7 +102,7 @@ class _BasicInfoStepState extends State<BasicInfoStep> {
           children: [
             const OnboardingTitle(
               title: 'Tu perfil',
-              subtitle: 'Foto, alias y algunos datos bケsicos.',
+              subtitle: 'Foto, alias y algunos datos basicos.',
             ),
             Center(
               child: Column(
@@ -125,7 +127,7 @@ class _BasicInfoStepState extends State<BasicInfoStep> {
                   ),
                   const SizedBox(height: 10),
                   Text(
-                    'Aヵade una foto clara y agradable. Es obligatorio para generar confianza.',
+                    'Agrega una foto clara y agradable. Es obligatorio para generar confianza.',
                     textAlign: TextAlign.center,
                     style: TextStyle(fontSize: 12, color: Colors.grey[400]),
                   ),
@@ -144,7 +146,7 @@ class _BasicInfoStepState extends State<BasicInfoStep> {
               controller: widget.aliasC,
               decoration: const InputDecoration(
                 labelText: 'Alias o apodo',
-                helperText: 'Elige un nombre カnico y fケcil de recordar.',
+                helperText: 'Elige un nombre unico y facil de recordar.',
                 border: OutlineInputBorder(),
               ),
             ),
@@ -159,11 +161,21 @@ class _BasicInfoStepState extends State<BasicInfoStep> {
             ),
             const SizedBox(height: 16),
             TextField(
+              controller: widget.phoneC,
+              keyboardType: TextInputType.phone,
+              decoration: const InputDecoration(
+                labelText: 'Numero de telefono',
+                helperText: 'Se usa para seguridad y recuperacion de cuenta.',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 16),
+            TextField(
               controller: widget.bioC,
               maxLines: 4,
               decoration: const InputDecoration(
-                labelText: 'Biografヴa (opcional)',
-                helperText: 'Cuゼntale en pocas palabras a la otra persona quiゼn eres.',
+                labelText: 'Biografia',
+                helperText: 'Cuentale en pocas palabras a la otra persona quien eres.',
                 alignLabelWithHint: true,
                 border: OutlineInputBorder(),
               ),

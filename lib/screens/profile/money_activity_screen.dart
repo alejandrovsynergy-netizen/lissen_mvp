@@ -213,6 +213,16 @@ class _MoneyActivityScreenState extends State<MoneyActivityScreen> {
     required bool isSpeaker,
     required bool isCompanion,
   }) {
+    bool _isTrue(dynamic v) {
+      if (v == true) return true;
+      if (v is num) return v != 0;
+      if (v is String) {
+        final s = v.toLowerCase().trim();
+        return s == 'true' || s == '1' || s == 'yes';
+      }
+      return false;
+    }
+
     // ===== Hablanate (paga) =====
     final stripeCustomerId = (userData['stripeCustomerId'] as String?)?.trim();
     final chargesEnabled = userData['stripeChargesEnabled'] as bool?;
@@ -228,16 +238,18 @@ class _MoneyActivityScreenState extends State<MoneyActivityScreen> {
         .toString()
         .trim();
 
-    final connectPayoutsEnabled = (userData['stripeConnectPayoutsEnabled'] ??
-            userData['stripePayoutsEnabled']) ==
-        true;
+    final connectPayoutsEnabled = _isTrue(
+      userData['stripeConnectPayoutsEnabled'] ??
+          userData['stripePayoutsEnabled'],
+    );
 
-    final connectDetailsSubmitted =
-        (userData['stripeConnectDetailsSubmitted'] ??
-                userData['stripeDetailsSubmitted']) ==
-            true;
+    final connectDetailsSubmitted = _isTrue(
+      userData['stripeConnectDetailsSubmitted'] ??
+          userData['stripeDetailsSubmitted'],
+    );
 
     final bool isConnected = connectId.isNotEmpty;
+    final bool connectReady = connectPayoutsEnabled && connectDetailsSubmitted;
 
     String statusPagosComoHablante() {
       if (stripeCustomerId == null || stripeCustomerId.isEmpty) {
@@ -257,7 +269,7 @@ class _MoneyActivityScreenState extends State<MoneyActivityScreen> {
 
     String statusCobrosComoCompanera() {
       if (!isConnected) return 'Aún no tienes una cuenta de cobro conectada.';
-      if (connectPayoutsEnabled && connectDetailsSubmitted) {
+      if (connectReady) {
         return '✅ Cuenta conectada y lista para recibir dinero.';
       }
       return '⚠️ Cuenta conectada, pero falta completar/verificar datos en Stripe.';
@@ -421,8 +433,30 @@ class _MoneyActivityScreenState extends State<MoneyActivityScreen> {
                                 _snack(
                                     'Completa Stripe Connect en el navegador y regresa a la app.');
                               } else {
-                                await api.getAccountStatus();
-                                _snack('Estado actualizado ✅');
+                                final status = await api.getAccountStatus();
+                                final detailsOk = _isTrue(status['detailsSubmitted']);
+                                final payoutsOk = _isTrue(status['payoutsEnabled']);
+                                if (detailsOk && payoutsOk) {
+                                  _snack('Estado actualizado OK.');
+                                } else {
+                                  final url = await api.createOnboardingLink(
+                                    returnUrl:
+                                        'https://lissen-mvp.web.app/stripe-return',
+                                    refreshUrl:
+                                        'https://lissen-mvp.web.app/stripe-refresh',
+                                  );
+
+                                  final ok = await launchUrl(
+                                    Uri.parse(url),
+                                    mode: LaunchMode.externalApplication,
+                                  );
+                                  if (!ok) {
+                                    throw Exception('No se pudo abrir el navegador.');
+                                  }
+
+                                  _snack(
+                                      'Completa Stripe Connect en el navegador y regresa a la app.');
+                                }
                               }
                             } catch (e) {
                               _snack('Stripe Connect: $e');
@@ -431,9 +465,11 @@ class _MoneyActivityScreenState extends State<MoneyActivityScreen> {
                             }
                           },
                     child: Text(
-                      isConnected
-                          ? 'Verificar estado de cuenta'
-                          : 'Conectar cuenta para recibir dinero',
+                      !isConnected
+                          ? 'Conectar cuenta para recibir dinero'
+                          : !connectReady
+                              ? 'Completar verificacion en Stripe'
+                              : 'Verificar estado de cuenta',
                       style: const TextStyle(fontSize: 14),
                     ),
                   ),

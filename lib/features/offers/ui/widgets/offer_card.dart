@@ -12,6 +12,10 @@ class OfferCard extends StatelessWidget {
   final String currentUserAlias;
   final bool isProcessing;
 
+  final bool allowTake;
+  final String? takeBlockedMessage;
+  final Set<String> blockedUserIds;
+
   final Future<void> Function({
     required String offerId,
     required Map<String, dynamic> offerData,
@@ -21,6 +25,8 @@ class OfferCard extends StatelessWidget {
 
   final void Function(String offerId, Map<String, dynamic> offerData)? onEdit;
   final Future<void> Function(String offerId)? onDelete;
+  final Future<void> Function(String offerId, Map<String, dynamic> offerData)?
+      onRejectWithCode;
   final Future<void> Function(String offerId, Map<String, dynamic> offerData)?
       onSpeakerPendingDecision;
 
@@ -33,9 +39,13 @@ class OfferCard extends StatelessWidget {
     required this.currentUserId,
     required this.currentUserAlias,
     required this.isProcessing,
+    this.allowTake = true,
+    this.takeBlockedMessage,
+    this.blockedUserIds = const {},
     required this.onTakeOffer,
     this.onEdit,
     this.onDelete,
+    this.onRejectWithCode,
     this.onSpeakerPendingDecision,
   });
 
@@ -101,6 +111,15 @@ class OfferCard extends StatelessWidget {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
 
+    final blockedByMe = blockedUserIds.contains(speakerId);
+    final blockedBySpeaker = (profile?['blockedUsers'] as List<dynamic>?)
+            ?.map((e) => e.toString())
+            .contains(currentUserId) ==
+        true;
+    if (blockedByMe || blockedBySpeaker) {
+      return const SizedBox.shrink();
+    }
+
     // ===== Colores "preview" (solo visual) =====
     const cyan = Color(0xFF22D3EE);
     const blue = Color(0xFF3B82F6);
@@ -139,10 +158,19 @@ class OfferCard extends StatelessWidget {
     final city = (data['speakerCity'] ?? '').toString();
     final country = (data['speakerCountry'] ?? '').toString();
     final location = [city, country].where((e) => e.isNotEmpty).join(', ');
+    final companionCode = (data['companionCode'] ?? '').toString().trim();
+    final hasCompanionCode = companionCode.isNotEmpty;
 
-    final canTake = !isSpeaker && !isProcessing;
+    final canTake = !isSpeaker && !isProcessing && allowTake;
     final status = (data['status'] ?? 'active').toString();
     final isPaymentRequired = isSpeaker && status == 'payment_required';
+    final canRejectWithCode = !isSpeaker &&
+        !isProcessing &&
+        hasCompanionCode &&
+        onRejectWithCode != null;
+
+    final showTakeBlocked = !isSpeaker && !isProcessing && !allowTake &&
+        (takeBlockedMessage ?? '').isNotEmpty;
 
 
     // ✅ Contraste: borde + fondo de card (sin Colors.grey hardcodeado)
@@ -161,6 +189,13 @@ class OfferCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: borderColor, width: 1),
         boxShadow: [
+          if (hasCompanionCode)
+            BoxShadow(
+              color: cyan.withOpacity(0.45),
+              blurRadius: 26,
+              spreadRadius: 1,
+              offset: const Offset(0, 8),
+            ),
           BoxShadow(
             color: Colors.black.withOpacity(0.22),
             blurRadius: 18,
@@ -458,6 +493,35 @@ class OfferCard extends StatelessWidget {
                       text: 'Estilo de conversación: ${_labelTone(tone)}',
                     ),
 
+                  if (hasCompanionCode) ...[
+                    const SizedBox(height: 10),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: cyan.withOpacity(0.12),
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(color: cyan.withOpacity(0.40)),
+                        boxShadow: [
+                          BoxShadow(
+                            color: cyan.withOpacity(0.55),
+                            blurRadius: 18,
+                            spreadRadius: 1,
+                          ),
+                        ],
+                      ),
+                      child: Text(
+                        'Codigo de companera: $companionCode',
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: cyan.withOpacity(0.95),
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
+                  ],
+
                   if (description.isNotEmpty) ...[
                     const SizedBox(height: 10),
                     Text(
@@ -496,6 +560,31 @@ class OfferCard extends StatelessWidget {
                     ),
                   ],
 
+                  if (showTakeBlocked) ...[
+                    const SizedBox(height: 12),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 8,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.redAccent.withOpacity(0.10),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: Colors.redAccent.withOpacity(0.35),
+                        ),
+                      ),
+                      child: Text(
+                        takeBlockedMessage ??
+                            'Conecta tu cuenta de Stripe para poder tomar ofertas.',
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: Colors.redAccent,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ],
                   if (canTake) ...[
                     const SizedBox(height: 14),
                     SizedBox(
@@ -549,6 +638,18 @@ class OfferCard extends StatelessWidget {
                                   ),
                                 ),
                         ),
+                      ),
+                    ),
+                  ],
+                  if (canRejectWithCode) ...[
+                    const SizedBox(height: 8),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: TextButton(
+                        onPressed: () {
+                          onRejectWithCode!(docId, data);
+                        },
+                        child: const Text('Rechazar'),
                       ),
                     ),
                   ],

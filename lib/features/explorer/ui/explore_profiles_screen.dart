@@ -5,6 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:lissen_mvp/screens/create_offer_dialog.dart';
+import 'package:lissen_mvp/screens/waiting_for_companion_response_screen.dart';
 
 import 'public_profile_screen.dart'; // PublicProfileBody
 
@@ -58,10 +59,22 @@ class _ExploreProfilesScreenState extends State<ExploreProfilesScreen> {
     final h = Object.hashAll(ids);
     if (h == _stableHash) return;
 
+    String? currentId;
+    if (_stableOrderIds.isNotEmpty) {
+      final safeIndex =
+          (_index % _stableOrderIds.length + _stableOrderIds.length) %
+              _stableOrderIds.length;
+      currentId = _stableOrderIds[safeIndex];
+    }
+
     _stableHash = h;
     _stableOrderIds = ids;
-    _index = 0;
-    // OJO: NO hacemos setState aquí porque esto se llama dentro de build()
+    if (currentId != null && ids.contains(currentId)) {
+      _index = ids.indexOf(currentId);
+    } else {
+      _index = 0;
+    }
+    // OJO: NO hacemos setState aqui porque esto se llama dentro de build()
     // y el build actual ya va a pintar con el nuevo orden.
   }
 
@@ -103,6 +116,10 @@ class _ExploreProfilesScreenState extends State<ExploreProfilesScreen> {
             }
 
             final me = meSnap.data!.data() ?? {};
+            final blockedByMe = (me['blockedUsers'] as List<dynamic>?)
+                ?.map((e) => e.toString())
+                .toSet() ??
+                <String>{};
             final myRole = (me['role'] as String?) ?? 'speaker';
             final targetRole = (myRole == 'speaker') ? 'companion' : 'speaker';
             final canMakeOffer = myRole == 'speaker';
@@ -133,7 +150,18 @@ class _ExploreProfilesScreenState extends State<ExploreProfilesScreen> {
                   return const Center(child: CircularProgressIndicator());
                 }
 
-                final docs = snapshot.data!.docs.where((d) => d.id != myUid).toList();
+                final docs = snapshot.data!.docs
+                    .where((d) => d.id != myUid)
+                    .where((d) {
+                      if (blockedByMe.contains(d.id)) return false;
+                      final otherBlocked = (d.data()['blockedUsers']
+                              as List<dynamic>?)
+                          ?.map((e) => e.toString())
+                          .contains(myUid) ==
+                          true;
+                      return !otherBlocked;
+                    })
+                    .toList();
 
                 // Map por id para usar data actual SIN cambiar el orden
                 final mapById = <String, QueryDocumentSnapshot<Map<String, dynamic>>>{};
@@ -159,13 +187,18 @@ class _ExploreProfilesScreenState extends State<ExploreProfilesScreen> {
                     withGeo.add(_IdWithDist(id: d.id, distKm: distKm));
                   }
 
-                  withGeo.sort((a, b) => a.distKm.compareTo(b.distKm));
+                  withGeo.sort((a, b) {
+                    final cmp = a.distKm.compareTo(b.distKm);
+                    if (cmp != 0) return cmp;
+                    return a.id.compareTo(b.id);
+                  });
+                  withoutGeo.sort();
                   computedOrderIds = [
                     ...withGeo.map((e) => e.id),
                     ...withoutGeo,
                   ];
                 } else {
-                  computedOrderIds = docs.map((e) => e.id).toList();
+                  computedOrderIds = docs.map((e) => e.id).toList()..sort();
                 }
 
                 // ✅ fija un orden estable (sin setState extra)
@@ -269,7 +302,8 @@ class _ExploreProfilesScreenState extends State<ExploreProfilesScreen> {
                                                             .toString()
                                                             .trim();
 
-                                                        await showCreateOfferDialog(
+                                                        final offerId =
+                                                            await showCreateOfferDialog(
                                                           context: context,
                                                           userId: myUid,
                                                           alias: myAlias,
@@ -277,8 +311,24 @@ class _ExploreProfilesScreenState extends State<ExploreProfilesScreen> {
                                                           city: myCity,
                                                           photoUrl: myPhotoUrl,
                                                           bio: myBio,
-                                                          prefillCompanionCode: companionCode.isNotEmpty ? companionCode : null,
+                                                          prefillCompanionCode: companionCode.isNotEmpty
+                                                              ? companionCode
+                                                              : null,
+                                                          createdFromExplore: true,
+                                                          targetCompanionId: next.id,
                                                         );
+
+                                                        if (offerId != null &&
+                                                            context.mounted) {
+                                                          Navigator.of(context).push(
+                                                            MaterialPageRoute(
+                                                              builder: (_) =>
+                                                                  WaitingForCompanionResponseScreen(
+                                                                offerId: offerId,
+                                                              ),
+                                                            ),
+                                                          );
+                                                        }
                                                       }
                                                     : null,
                                               ),
@@ -302,7 +352,8 @@ class _ExploreProfilesScreenState extends State<ExploreProfilesScreen> {
                                                       .toString()
                                                       .trim();
 
-                                                  await showCreateOfferDialog(
+                                                  final offerId =
+                                                      await showCreateOfferDialog(
                                                     context: context,
                                                     userId: myUid,
                                                     alias: myAlias,
@@ -310,8 +361,24 @@ class _ExploreProfilesScreenState extends State<ExploreProfilesScreen> {
                                                     city: myCity,
                                                     photoUrl: myPhotoUrl,
                                                     bio: myBio,
-                                                    prefillCompanionCode: companionCode.isNotEmpty ? companionCode : null,
+                                                    prefillCompanionCode: companionCode.isNotEmpty
+                                                        ? companionCode
+                                                        : null,
+                                                    createdFromExplore: true,
+                                                    targetCompanionId: current.id,
                                                   );
+
+                                                  if (offerId != null &&
+                                                      context.mounted) {
+                                                    Navigator.of(context).push(
+                                                      MaterialPageRoute(
+                                                        builder: (_) =>
+                                                            WaitingForCompanionResponseScreen(
+                                                          offerId: offerId,
+                                                        ),
+                                                      ),
+                                                    );
+                                                  }
                                                 }
                                               : null,
                                         ),

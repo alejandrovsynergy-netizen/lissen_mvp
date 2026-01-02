@@ -14,6 +14,7 @@ import 'onboarding/steps/basic_info_step.dart';
 import 'onboarding/steps/gender_prefs_step.dart';
 import 'onboarding/steps/location_step.dart';
 import 'onboarding/steps/terms_step.dart';
+import 'onboarding/steps/privacy_step.dart';
 import 'onboarding/steps/finish_step.dart';
 
 class OnboardingScreen extends StatefulWidget {
@@ -29,6 +30,8 @@ class OnboardingScreen extends StatefulWidget {
 class _OnboardingScreenState extends State<OnboardingScreen> {
   int _step = 0;
   bool _saving = false;
+  final PageController _pageController = PageController();
+  bool _suppressPageChange = false;
   String? _error;
 
   // Campos principales
@@ -37,10 +40,12 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   final TextEditingController _countryC = TextEditingController();
   final TextEditingController _cityC = TextEditingController();
   final TextEditingController _bioC = TextEditingController();
+  final TextEditingController _phoneC = TextEditingController();
 
   String? _role; // speaker / companion
   String? _gender; // hombre / mujer / otro / nsnc
   bool _termsAccepted = false;
+  bool _privacyAccepted = false;
 
   // aclaraciones según rol
   bool _roleClarificationsAccepted = false;
@@ -71,7 +76,9 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     _countryC.text = d['country'] ?? '';
     _cityC.text = d['city'] ?? '';
     _bioC.text = d['bio'] ?? '';
+    _phoneC.text = d['phoneNumber'] ?? '';
     _termsAccepted = d['termsAccepted'] == true;
+    _privacyAccepted = d['privacyAccepted'] == true;
 
     _photoUrl = d['photoUrl'] as String?;
 
@@ -97,6 +104,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     _countryC.dispose();
     _cityC.dispose();
     _bioC.dispose();
+    _phoneC.dispose();
+    _pageController.dispose();
     super.dispose();
   }
 
@@ -219,6 +228,172 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     }
   }
 
+  Future<bool> _isAliasTaken(String alias) async {
+    final normalized = alias.trim().toLowerCase();
+    if (normalized.isEmpty) return false;
+
+    final byLower = await FirebaseFirestore.instance
+        .collection('users')
+        .where('aliasLower', isEqualTo: normalized)
+        .limit(1)
+        .get();
+    if (byLower.docs.isNotEmpty) {
+      final docId = byLower.docs.first.id;
+      return docId != widget.uid;
+    }
+
+    final byExact = await FirebaseFirestore.instance
+        .collection('users')
+        .where('alias', isEqualTo: alias.trim())
+        .limit(1)
+        .get();
+    if (byExact.docs.isNotEmpty) {
+      final docId = byExact.docs.first.id;
+      return docId != widget.uid;
+    }
+
+    return false;
+  }
+
+  Future<bool> _canAdvanceFromStep(int step) async {
+    setState(() => _error = null);
+
+    if (step == 0) {
+      if (_role == null) {
+        setState(() => _error = 'Debes elegir tu rol para continuar.');
+        return false;
+      }
+      return true;
+    }
+
+    if (step == 1) {
+      if (!_roleClarificationsAccepted) {
+        setState(() => _error = 'Debes aceptar las aclaraciones de tu rol.');
+        return false;
+      }
+      return true;
+    }
+
+    if (step == 2) {
+      final alias = _aliasC.text.trim();
+      final age = int.tryParse(_ageC.text.trim());
+      final phone = _phoneC.text.trim();
+      final bio = _bioC.text.trim();
+
+      if (_photoUrl == null || _photoUrl!.isEmpty) {
+        setState(() => _error = 'Debes subir una foto de perfil para continuar.');
+        return false;
+      }
+      if (alias.length < 3) {
+        setState(() => _error = 'El alias debe tener al menos 3 caracteres.');
+        return false;
+      }
+      if (await _isAliasTaken(alias)) {
+        setState(() => _error = 'El alias ya esta en uso.');
+        return false;
+      }
+      if (age == null || age < 18 || age > 90) {
+        setState(() => _error = 'Escribe una edad valida (entre 18 y 90).');
+        return false;
+      }
+      if (phone.isEmpty) {
+        setState(() => _error = 'Escribe tu numero de telefono.');
+        return false;
+      }
+      if (bio.isEmpty) {
+        setState(() => _error = 'Escribe tu biografia para continuar.');
+        return false;
+      }
+      return true;
+    }
+
+    if (step == 3) {
+      if (_gender == null) {
+        setState(() => _error = 'Debes elegir tu genero.');
+        return false;
+      }
+      if (_preferredGender == null) {
+        setState(() => _error = 'Elige con quien prefieres hablar.');
+        return false;
+      }
+      return true;
+    }
+
+    if (step == 4) {
+      final city = _cityC.text.trim();
+      final country = _countryC.text.trim();
+      if (city.isEmpty || country.isEmpty) {
+        setState(() => _error =
+            'Escribe tu ciudad y pais, o usa el boton de ubicacion para rellenarlos.');
+        return false;
+      }
+      return true;
+    }
+
+    if (step == 5) {
+      if (!_termsAccepted) {
+        setState(() => _error = 'Debes aceptar los terminos de uso.');
+        return false;
+      }
+      return true;
+    }
+
+    if (step == 6) {
+      if (!_privacyAccepted) {
+        setState(() => _error = 'Debes aceptar el aviso de privacidad.');
+        return false;
+      }
+      return true;
+    }
+
+    return true;
+  }
+
+  Future<void> _handlePageChanged(int newIndex) async {
+    if (_suppressPageChange) {
+      _suppressPageChange = false;
+      return;
+    }
+
+    if (newIndex > _step) {
+      final ok = await _canAdvanceFromStep(_step);
+      if (!ok) {
+        _suppressPageChange = true;
+        _pageController.jumpToPage(_step);
+        return;
+      }
+    }
+
+    if (!mounted) return;
+    setState(() => _step = newIndex);
+  }
+
+  Future<void> _goNext(int totalSteps) async {
+    final ok = await _canAdvanceFromStep(_step);
+    if (!ok) return;
+
+    if (_step >= totalSteps - 1) return;
+
+    _suppressPageChange = true;
+    setState(() => _step++);
+    await _pageController.animateToPage(
+      _step,
+      duration: const Duration(milliseconds: 250),
+      curve: Curves.easeOut,
+    );
+  }
+
+  Future<void> _goBack() async {
+    if (_step <= 0) return;
+    _suppressPageChange = true;
+    setState(() => _step--);
+    await _pageController.animateToPage(
+      _step,
+      duration: const Duration(milliseconds: 250),
+      curve: Curves.easeOut,
+    );
+  }
+
   // ============================================================
   // GUARDAR TODO (tu lógica)
   // ============================================================
@@ -236,8 +411,12 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       final country = _countryC.text.trim();
       final city = _cityC.text.trim();
       final bio = _bioC.text.trim();
+      final phone = _phoneC.text.trim();
 
       if (alias.length < 3) throw 'El alias debe tener al menos 3 caracteres.';
+      if (await _isAliasTaken(alias)) {
+        throw 'El alias ya esta en uso.';
+      }
       if (_role == null) throw 'Debes elegir tu rol.';
       if (!_roleClarificationsAccepted) {
         throw 'Debes aceptar las aclaraciones de tu rol.';
@@ -246,7 +425,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       if (age == null || age < 18 || age > 90) throw 'Escribe una edad válida.';
       if (country.isEmpty || city.isEmpty) throw 'Escribe país y ciudad.';
       if (_preferredGender == null) throw 'Elige con quién prefieres hablar.';
-      if (!_termsAccepted) throw 'Debes aceptar los términos de uso.';
+      if (!_termsAccepted) throw 'Debes aceptar los terminos de uso.';
+      if (!_privacyAccepted) throw 'Debes aceptar el aviso de privacidad.';
       if (_photoUrl == null || _photoUrl!.isEmpty) {
         throw 'Sube una foto de perfil para continuar.';
       }
@@ -254,14 +434,17 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       final data = <String, dynamic>{
         'uid': widget.uid,
         'alias': alias,
+        'aliasLower': alias.toLowerCase(),
         'role': _role,
         'gender': _gender,
         'age': age,
         'country': country,
         'city': city,
         'bio': bio,
+        'phoneNumber': phone,
         'photoUrl': _photoUrl,
         'termsAccepted': _termsAccepted,
+        'privacyAccepted': _privacyAccepted,
         'preferredGender': _preferredGender,
         'targetGender': _preferredGender, // compat
         'onboardingCompleted': true,
@@ -311,6 +494,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       BasicInfoStep(
         aliasC: _aliasC,
         ageC: _ageC,
+        phoneC: _phoneC,
         bioC: _bioC,
         role: _role,
         photoUrl: _photoUrl,
@@ -337,6 +521,10 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         termsAccepted: _termsAccepted,
         onTermsChanged: (v) => setState(() => _termsAccepted = v),
       ),
+      PrivacyStep(
+        privacyAccepted: _privacyAccepted,
+        onPrivacyChanged: (v) => setState(() => _privacyAccepted = v),
+      ),
       FinishStep(alias: _aliasC.text.trim()),
     ];
 
@@ -356,7 +544,13 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               children: [
                 OnboardingStepIndicator(current: _step, total: steps.length),
                 const SizedBox(height: 24),
-                Expanded(child: steps[_step]),
+                Expanded(
+                  child: PageView(
+                    controller: _pageController,
+                    onPageChanged: _handlePageChanged,
+                    children: steps,
+                  ),
+                ),
                 if (_error != null) ...[
                   const SizedBox(height: 8),
                   Text(
@@ -388,14 +582,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           if (_step > 0)
             Expanded(
               child: OutlinedButton(
-                onPressed: _saving
-                    ? null
-                    : () {
-                        setState(() {
-                          _error = null;
-                          _step--;
-                        });
-                      },
+                onPressed: _saving ? null : _goBack,
                 child: const Text('Atrás'),
               ),
             ),
@@ -404,33 +591,9 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
             child: ElevatedButton(
               onPressed: _saving
                   ? null
-                  : () {
-                      setState(() => _error = null);
-
+                  : () async {
                       if (!isLastStep) {
-                        if (_step == 0 && _role == null) {
-                          setState(() => _error = 'Debes elegir tu rol para continuar.');
-                          return;
-                        }
-                        if (_step == 1 && !_roleClarificationsAccepted) {
-                          setState(() => _error = 'Debes aceptar las aclaraciones de tu rol.');
-                          return;
-                        }
-                        if (_step == 2 && (_photoUrl == null || _photoUrl!.isEmpty)) {
-                          setState(() => _error = 'Debes subir una foto de perfil para continuar.');
-                          return;
-                        }
-                        if (_step == 4) {
-                          final city = _cityC.text.trim();
-                          final country = _countryC.text.trim();
-                          if (city.isEmpty || country.isEmpty) {
-                            setState(() => _error =
-                                'Escribe tu ciudad y país, o usa el botón de ubicación para rellenarlos.');
-                            return;
-                          }
-                        }
-
-                        setState(() => _step++);
+                        await _goNext(totalSteps);
                       } else {
                         _saveAll();
                       }

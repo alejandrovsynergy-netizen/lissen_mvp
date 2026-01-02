@@ -1061,6 +1061,9 @@ class _ShimmerSweepState extends State<_ShimmerSweep> with SingleTickerProviderS
       final theme = Theme.of(context);
       final cs = theme.colorScheme;
       final outline = cs.primary.withOpacity(0.30);
+      final fieldFill = cs.surface.withOpacity(0.70);
+      final hintColor = cs.onSurface.withOpacity(0.60);
+      final textColor = cs.onSurface;
 
       return Row(
         children: [
@@ -1069,19 +1072,23 @@ class _ShimmerSweepState extends State<_ShimmerSweep> with SingleTickerProviderS
               controller: controller,
               onChanged: onChanged,
               style: theme.textTheme.bodySmall?.copyWith(
-                color: const Color(0xFF0F172A),
+                color: textColor,
                 fontWeight: FontWeight.w700,
               ),
               decoration: InputDecoration(
                 hintText: hintText,
                 hintStyle: theme.textTheme.bodySmall?.copyWith(
-                  color: const Color(0xFF64748B),
+                  color: hintColor,
                   fontWeight: FontWeight.w600,
                 ),
-                prefixIcon: const Icon(Icons.search, size: 18, color: Color(0xFF64748B)),
+                prefixIcon: Icon(
+                  Icons.search,
+                  size: 18,
+                  color: hintColor,
+                ),
                 isDense: true,
                 filled: true,
-                fillColor: Colors.white,
+                fillColor: fieldFill,
                 contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                 enabledBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
@@ -1095,7 +1102,7 @@ class _ShimmerSweepState extends State<_ShimmerSweep> with SingleTickerProviderS
                     ? null
                     : IconButton(
                         tooltip: 'Limpiar',
-                        icon: const Icon(Icons.close, size: 18, color: Color(0xFF64748B)),
+                        icon: Icon(Icons.close, size: 18, color: hintColor),
                         onPressed: () {
                           controller.clear();
                           onChanged('');
@@ -1110,7 +1117,7 @@ class _ShimmerSweepState extends State<_ShimmerSweep> with SingleTickerProviderS
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(12),
               border: Border.all(color: outline, width: 1.6),
-              color: Colors.white,
+              color: fieldFill,
               boxShadow: const [
                 BoxShadow(
                   color: Colors.black12,
@@ -1120,15 +1127,15 @@ class _ShimmerSweepState extends State<_ShimmerSweep> with SingleTickerProviderS
               ],
             ),
             child: Theme(
-              data: theme.copyWith(canvasColor: Colors.white),
+              data: theme.copyWith(canvasColor: cs.surface),
               child: DropdownButtonHideUnderline(
                 child: DefaultTextStyle(
                   style: theme.textTheme.bodySmall!.copyWith(
-                    color: const Color(0xFF0F172A),
+                    color: textColor,
                     fontWeight: FontWeight.w800,
                   ),
                   child: IconTheme(
-                    data: const IconThemeData(color: Color(0xFF0F172A)),
+                    data: IconThemeData(color: textColor),
                     child: sortWidget,
                   ),
                 ),
@@ -1238,7 +1245,7 @@ class _ShimmerSweepState extends State<_ShimmerSweep> with SingleTickerProviderS
               await onHidePerson(myUid: myUid, otherUid: person.otherUid);
             },
             child: Card(
-              color: Colors.white,
+              color: cs.surface.withOpacity(0.60),
               elevation: 0,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(14),
@@ -1262,7 +1269,7 @@ class _ShimmerSweepState extends State<_ShimmerSweep> with SingleTickerProviderS
                   overflow: TextOverflow.ellipsis,
                   style: theme.textTheme.bodyMedium?.copyWith(
                     fontWeight: FontWeight.w800,
-                    color: const Color(0xFF0F172A),
+                    color: cs.onSurface,
                   ),
                 ),
                 subtitle: Column(
@@ -1278,14 +1285,14 @@ class _ShimmerSweepState extends State<_ShimmerSweep> with SingleTickerProviderS
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: theme.textTheme.labelSmall?.copyWith(
-                                color: const Color(0xFFB91C1C),
+                                color: cs.primary,
                                 fontWeight: FontWeight.w700,
                               ),
                             ),
                           ),
                           IconButton(
                             icon: const Icon(Icons.copy, size: 18),
-                            color: const Color(0xFF64748B),
+                            color: cs.onSurface.withOpacity(0.70),
                             onPressed: () => onCopy(companionCode, toast: 'Código copiado.'),
                           ),
                         ],
@@ -1297,14 +1304,14 @@ class _ShimmerSweepState extends State<_ShimmerSweep> with SingleTickerProviderS
                         child: Text(
                           'Última interacción: $lastStr',
                           style: theme.textTheme.labelSmall?.copyWith(
-                            color: const Color(0xFFB91C1C).withOpacity(0.75),
+                            color: cs.onSurface.withOpacity(0.70),
                             fontWeight: FontWeight.w600,
                           ),
                         ),
                       ),
                   ],
                 ),
-                trailing: const Icon(Icons.chevron_right, color: Color(0xFF64748B)),
+                trailing: Icon(Icons.chevron_right, color: cs.onSurface.withOpacity(0.70)),
               ),
             ),
           );
@@ -1431,7 +1438,7 @@ class _ShimmerSweepState extends State<_ShimmerSweep> with SingleTickerProviderS
               await onHideSession(sessionId: doc.id, myUid: myUid);
             },
             child: Card(
-              color: Colors.white,
+              color: cs.surface.withOpacity(0.60),
               elevation: 0,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(14),
@@ -1465,7 +1472,7 @@ class _ShimmerSweepState extends State<_ShimmerSweep> with SingleTickerProviderS
                               overflow: TextOverflow.ellipsis,
                               style: theme.textTheme.bodyMedium?.copyWith(
                                 fontWeight: FontWeight.w800,
-                                color: const Color(0xFF0F172A),
+                                color: cs.onSurface,
                               ),
                             ),
                             if (companionCode.isNotEmpty) ...[
@@ -1485,7 +1492,7 @@ class _ShimmerSweepState extends State<_ShimmerSweep> with SingleTickerProviderS
                                   ),
                                   IconButton(
                                     icon: const Icon(Icons.copy, size: 18),
-                                    color: const Color(0xFF64748B),
+                                    color: cs.onSurface.withOpacity(0.70),
                                     onPressed: () => onCopy(companionCode, toast: 'Código copiado.'),
                                   ),
                                 ],
@@ -1504,7 +1511,7 @@ class _ShimmerSweepState extends State<_ShimmerSweep> with SingleTickerProviderS
                               Text(
                                 completedStr,
                                 style: theme.textTheme.labelSmall?.copyWith(
-                                  color: const Color(0xFF64748B),
+                                  color: cs.onSurface.withOpacity(0.70),
                                   fontWeight: FontWeight.w600,
                                 ),
                               ),
@@ -1536,7 +1543,7 @@ class _ShimmerSweepState extends State<_ShimmerSweep> with SingleTickerProviderS
                         '\$${price.toStringAsFixed(2)} ${currency.toUpperCase()}',
                         style: theme.textTheme.bodyMedium?.copyWith(
                           fontWeight: FontWeight.w900,
-                          color: const Color(0xFF0F172A),
+                          color: cs.onSurface,
                         ),
                       ),
                     ],

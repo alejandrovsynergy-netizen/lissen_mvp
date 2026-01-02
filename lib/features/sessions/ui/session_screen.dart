@@ -1,14 +1,17 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 import 'package:zego_uikit_prebuilt_call/zego_uikit_prebuilt_call.dart';
+import 'package:zego_uikit_signaling_plugin/zego_uikit_signaling_plugin.dart';
 import 'package:zego_zim/zego_zim.dart'; // ZIMConversationType
 import 'package:zego_zimkit/zego_zimkit.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 import '../../payments/payments_api.dart';
 import '../../zego/zego_config.dart';
@@ -32,6 +35,9 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
   bool _zegoConnecting = false;
   bool _zegoReady = false;
   String? _zegoError;
+  bool _callInitInProgress = false;
+  bool _callReady = false;
+  bool _permissionsRequested = false;
 
   // Mínimo a cobrar cuando la que corta es la compañera
   static const int kMinBillingMinutes = 10;
@@ -89,6 +95,8 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
         });
 
         _ensureZegoReady(); // ✅ intenta conectar ZIM cuando ya hay data
+        _ensureCallInvitationReady();
+        _requestCallPermissionsIfNeeded(sessionData: snap.data());
       },
       onError: (e) {
         if (!mounted) return;
@@ -127,6 +135,8 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
         _sessionLoading = false;
       });
       _ensureZegoReady();
+      _ensureCallInvitationReady();
+      _requestCallPermissionsIfNeeded(sessionData: snap.data());
     } catch (e) {
       setState(() {
         _sessionError = 'Error cargando sesión: $e';
@@ -253,6 +263,95 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
     }
   }
 
+  Future<void> _requestCallPermissionsIfNeeded({
+    required Map<String, dynamic>? sessionData,
+  }) async {
+    if (_permissionsRequested || kIsWeb) return;
+    if (sessionData == null) return;
+    final status = (sessionData['status'] ?? 'active').toString();
+    if (status != 'active') return;
+
+    _permissionsRequested = true;
+    try {
+      await [
+        Permission.microphone,
+        Permission.camera,
+      ].request();
+    } catch (_) {
+      // No bloqueamos si falla, solo evitamos la friccion de permisos tardios.
+    }
+  }
+
+  Future<void> _ensureCallInvitationReady() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    final service = ZegoUIKitPrebuiltCallInvitationService();
+    if (service.isInit) {
+      if (mounted && !_callReady) {
+        setState(() => _callReady = true);
+      }
+      return;
+    }
+    if (_callInitInProgress) return;
+    if (kZegoAppSign.trim().isEmpty) return;
+
+    _callInitInProgress = true;
+
+    try {
+      final myAlias = _sessionData != null
+          ? _resolveMyAlias(_sessionData!, user.uid)
+          : (user.displayName ?? 'Usuario');
+      bool ok = false;
+      for (int i = 0; i < 2; i++) {
+        try {
+          await service.init(
+            appID: kZegoAppId,
+            appSign: kZegoAppSign,
+            userID: user.uid,
+            userName: myAlias.isNotEmpty ? myAlias : 'Usuario',
+            plugins: [ZegoUIKitSignalingPlugin()],
+          );
+          ok = service.isInit;
+          if (ok) break;
+        } catch (_) {
+          if (i == 1) rethrow;
+          await Future.delayed(const Duration(milliseconds: 600));
+        }
+      }
+      if (mounted) {
+        setState(() => _callReady = ok);
+      }
+    } catch (e) {
+      debugPrint('Error init Call Invitation en sesion: $e');
+      if (mounted) {
+        setState(() => _callReady = false);
+      }
+    } finally {
+      _callInitInProgress = false;
+    }
+  }
+
+  Future<bool> _waitForCallReady({
+    Duration timeout = const Duration(seconds: 2),
+  }) async {
+    final service = ZegoUIKitPrebuiltCallInvitationService();
+    final start = DateTime.now();
+    while (DateTime.now().difference(start) < timeout) {
+      if (service.isInit) {
+        if (mounted && !_callReady) {
+          setState(() => _callReady = true);
+        }
+        return true;
+      }
+      await Future.delayed(const Duration(milliseconds: 250));
+    }
+    if (mounted) {
+      setState(() => _callReady = false);
+    }
+    return false;
+  }
+
   Future<void> _stopAnyOngoingCallOrInvitation({
     required String otherUserId,
     required String otherAlias,
@@ -282,33 +381,60 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
     required String otherUserId,
     required String otherAlias,
   }) async {
+    await _ensureCallInvitationReady();
+    final ready = await _waitForCallReady();
     final service = ZegoUIKitPrebuiltCallInvitationService();
-    if (!service.isInit) {
+    if (!ready || !service.isInit) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
-            'Llamadas no disponibles: CallInvitationService no está inicializado.',
+            'Llamadas no disponibles: CallInvitationService no esta inicializado.',
           ),
         ),
       );
+      if (mounted) {
+        setState(() => _callReady = false);
+      }
       return;
     }
 
-    final ok = await service.send(
-      invitees: [ZegoCallUser(otherUserId, otherAlias)],
-      isVideoCall: isVideo,
-      resourceID: kZegoCallInvitationResourceId,
-      timeoutSeconds: 60,
-    );
+    bool ok = false;
+    try {
+      ok = await service.send(
+        invitees: [ZegoCallUser(otherUserId, otherAlias)],
+        isVideoCall: isVideo,
+        resourceID: kZegoCallInvitationResourceId,
+        timeoutSeconds: 60,
+      );
+    } catch (e) {
+      try {
+        ZegoUIKitPrebuiltCallInvitationService().uninit();
+      } catch (_) {}
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Llamadas no disponibles. Reintenta en unos segundos.\n$e',
+            ),
+          ),
+        );
+      }
+      if (mounted) {
+        setState(() => _callReady = false);
+      }
+      await _ensureCallInvitationReady();
+      return;
+    }
 
     if (!mounted) return;
     if (!ok) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No se pudo enviar la invitación.')),
+        const SnackBar(content: Text('No se pudo enviar la invitacion.')),
       );
     }
   }
+
 
   Future<void> _finishSession() async {
     if (_finishing) return;
@@ -936,6 +1062,11 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
     final endedBy = data['endedBy'] as String?;
     final isActive = status == 'active';
 
+    final communicationType =
+        (data['communicationType'] ?? 'chat').toString().toLowerCase();
+    final allowVoice = communicationType == 'voice' || communicationType == 'video';
+    final allowVideo = communicationType == 'video';
+
     final speakerAlias = (data['speakerAlias'] ?? 'Hablante').toString();
     final companionAlias = (data['companionAlias'] ?? 'Compañera').toString();
 
@@ -1015,7 +1146,7 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
           title: Text(isActive ? otherAlias : 'Sesión finalizada'),
           centerTitle: true,
           actions: [
-            if (isActive && callService.isInit)
+            if (isActive && allowVoice)
               _buildActionButton(
                 tooltip: 'Llamada',
                 icon: Icons.call,
@@ -1026,7 +1157,7 @@ class _SessionConversationScreenState extends State<SessionConversationScreen> {
                   otherAlias: otherAlias,
                 ),
               ),
-            if (isActive && callService.isInit)
+            if (isActive && allowVideo)
               _buildActionButton(
                 tooltip: 'Videollamada',
                 icon: Icons.videocam,

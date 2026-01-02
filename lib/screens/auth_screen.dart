@@ -22,10 +22,8 @@ class _AuthScreenState extends State<AuthScreen> {
 
   String? errorText;
 
-  // ✅ Mejor: instancia única
   final GoogleSignIn _googleSignIn = GoogleSignIn();
 
-  // ====== WRAPPERS PARA LOS BOTONES (void, no async) ======
   void _handleGoogleBtn() {
     if (loading) return;
     _signInWithGoogle();
@@ -43,9 +41,6 @@ class _AuthScreenState extends State<AuthScreen> {
     super.dispose();
   }
 
-  // ============================================================
-  // ✅ Validación simple (evita errores tontos y requests inútiles)
-  // ============================================================
   bool _validateEmailPass({required bool forRegister}) {
     final email = emailC.text.trim();
     final pass = passC.text.trim();
@@ -65,9 +60,6 @@ class _AuthScreenState extends State<AuthScreen> {
     return true;
   }
 
-  // ============================================================
-  // 🔵 LOGIN CON EMAIL
-  // ============================================================
   Future<void> _login() async {
     if (!_validateEmailPass(forRegister: false)) return;
 
@@ -81,7 +73,6 @@ class _AuthScreenState extends State<AuthScreen> {
         email: emailC.text.trim(),
         password: passC.text.trim(),
       );
-      // 🚫 No navegamos aquí, el AuthGate de main.dart se encarga
     } on FirebaseAuthException catch (e) {
       setState(() => errorText = _firebaseErrorMsg(e));
     } catch (_) {
@@ -91,9 +82,6 @@ class _AuthScreenState extends State<AuthScreen> {
     }
   }
 
-  // ============================================================
-  // 🔵 REGISTRO CON EMAIL
-  // ============================================================
   Future<void> _register() async {
     if (!_validateEmailPass(forRegister: true)) return;
 
@@ -114,7 +102,6 @@ class _AuthScreenState extends State<AuthScreen> {
         'onboardingCompleted': false,
         'createdAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
-      // AuthGate decide si manda a onboarding o home
     } on FirebaseAuthException catch (e) {
       setState(() => errorText = _firebaseErrorMsg(e));
     } catch (_) {
@@ -124,9 +111,6 @@ class _AuthScreenState extends State<AuthScreen> {
     }
   }
 
-  // ============================================================
-  // 🔵 GOOGLE SIGN-IN (login + registro)
-  // ============================================================
   Future<void> _signInWithGoogle() async {
     setState(() {
       loading = true;
@@ -137,27 +121,23 @@ class _AuthScreenState extends State<AuthScreen> {
       final GoogleSignInAccount? googleUser = await _googleSignIn.signIn();
 
       if (googleUser == null) {
-        // Usuario canceló
         if (mounted) setState(() => loading = false);
         return;
       }
 
-      final GoogleSignInAuthentication googleAuth = await googleUser.authentication;
+      final googleAuth = await googleUser.authentication;
 
       final credential = GoogleAuthProvider.credential(
         accessToken: googleAuth.accessToken,
         idToken: googleAuth.idToken,
       );
 
-      final userCred = await FirebaseAuth.instance.signInWithCredential(
-        credential,
-      );
+      final userCred = await FirebaseAuth.instance.signInWithCredential(credential);
 
       final uid = userCred.user!.uid;
       final userRef = FirebaseFirestore.instance.collection('users').doc(uid);
       final snap = await userRef.get();
 
-      // Solo creamos el doc si NO existe (para no pisar onboardingCompleted)
       if (!snap.exists) {
         await userRef.set({
           'uid': uid,
@@ -165,8 +145,6 @@ class _AuthScreenState extends State<AuthScreen> {
           'createdAt': FieldValue.serverTimestamp(),
         }, SetOptions(merge: true));
       }
-
-      // AuthGate ya se encargará de mandar a Onboarding o Home
     } on FirebaseAuthException catch (e) {
       setState(() => errorText = _firebaseErrorMsg(e));
     } catch (_) {
@@ -176,9 +154,6 @@ class _AuthScreenState extends State<AuthScreen> {
     }
   }
 
-  // ============================================================
-  // 🔵 FACEBOOK LOGIN (login + registro)
-  // ============================================================
   Future<void> _signInWithFacebook() async {
     setState(() {
       loading = true;
@@ -186,9 +161,6 @@ class _AuthScreenState extends State<AuthScreen> {
     });
 
     try {
-      // Si ves sesiones "pegadas", prueba descomentar esto:
-      // await FacebookAuth.instance.logOut();
-
       final LoginResult result = await FacebookAuth.instance.login();
 
       if (result.status == LoginStatus.cancelled) {
@@ -197,25 +169,18 @@ class _AuthScreenState extends State<AuthScreen> {
       }
 
       if (result.status != LoginStatus.success) {
-        if (mounted) {
-          setState(() => errorText = 'No se pudo iniciar con Facebook.');
-        }
+        if (mounted) setState(() => errorText = 'No se pudo iniciar con Facebook.');
         return;
       }
 
       final accessToken = result.accessToken;
       if (accessToken == null) {
-        if (mounted) {
-          setState(() => errorText = 'No se pudo obtener el token de Facebook.');
-        }
+        if (mounted) setState(() => errorText = 'No se pudo obtener el token de Facebook.');
         return;
       }
 
       final credential = FacebookAuthProvider.credential(accessToken.token);
-
-      final userCred = await FirebaseAuth.instance.signInWithCredential(
-        credential,
-      );
+      final userCred = await FirebaseAuth.instance.signInWithCredential(credential);
 
       final uid = userCred.user!.uid;
       final userRef = FirebaseFirestore.instance.collection('users').doc(uid);
@@ -230,16 +195,44 @@ class _AuthScreenState extends State<AuthScreen> {
       }
     } on FirebaseAuthException catch (e) {
       setState(() => errorText = _firebaseErrorMsg(e));
-    } catch (e) {
+    } catch (_) {
       setState(() => errorText = 'Error al iniciar con Facebook.');
     } finally {
       if (mounted) setState(() => loading = false);
     }
   }
 
-  // ============================================================
-  // 🔵 TRADUCIR ERRORES DE FIREBASE
-  // ============================================================
+  Future<void> _sendPasswordReset() async {
+    if (loading) return;
+
+    final email = emailC.text.trim();
+    if (email.isEmpty || !email.contains('@')) {
+      setState(() => errorText = 'Escribe un email valido.');
+      return;
+    }
+
+    setState(() {
+      loading = true;
+      errorText = null;
+    });
+
+    try {
+      await FirebaseAuth.instance.sendPasswordResetEmail(email: email);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Te enviamos un correo para restablecer tu contrasena.'),
+        ),
+      );
+    } on FirebaseAuthException catch (e) {
+      setState(() => errorText = _firebaseErrorMsg(e));
+    } catch (_) {
+      setState(() => errorText = 'No se pudo enviar el correo.');
+    } finally {
+      if (mounted) setState(() => loading = false);
+    }
+  }
+
   String _firebaseErrorMsg(FirebaseAuthException e) {
     switch (e.code) {
       case 'invalid-email':
@@ -259,13 +252,10 @@ class _AuthScreenState extends State<AuthScreen> {
       case 'too-many-requests':
         return 'Demasiados intentos. Intenta más tarde.';
       default:
-        return 'Error: ${e.message ?? 'No se pudo autenticar.'}';
+        return 'Hubo un problema al autenticar. Intenta de nuevo.';
     }
   }
 
-  // ============================================================
-  // 🔵 UI
-  // ============================================================
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -280,71 +270,94 @@ class _AuthScreenState extends State<AuthScreen> {
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(20),
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 400),
+            constraints: const BoxConstraints(maxWidth: 420),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                // ========= LOGO + TITULO =========
-                Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.mic_none,
-                      size: 56,
-                      color: cs.primary,
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      'Bienvenido a Lissen',
-                      style: theme.textTheme.headlineSmall?.copyWith(
-                        fontWeight: FontWeight.w600,
+                // =========================
+                // HEADER SOLO EN LOGIN
+                // =========================
+                if (isLogin) ...[
+                  Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.mic_none, size: 56, color: cs.primary),
+                      const SizedBox(height: 12),
+                      Text(
+                        'Bienvenido a Lissen',
+                        style: theme.textTheme.headlineSmall?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                        textAlign: TextAlign.center,
                       ),
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Conversaciones que sí valen la pena.',
-                      textAlign: TextAlign.center,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: cs.onSurfaceVariant,
+                      const SizedBox(height: 4),
+                      Text(
+                        'Conversaciones que sí valen la pena.',
+                        textAlign: TextAlign.center,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: cs.onSurfaceVariant,
+                        ),
                       ),
+                    ],
+                  ),
+                  const SizedBox(height: 18),
+                ] else ...[
+                  // =========================
+                  // HEADER SOLO EN CREAR CUENTA
+                  // (SIN "Bienvenido" NI subtítulo)
+                  // =========================
+                  const SizedBox(height: 6),
+                  Text(
+                    'Selecciona una opción o ingresa tu correo',
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
                     ),
-                  ],
-                ),
+                  ),
+                  const SizedBox(height: 18),
+                ],
 
-                const SizedBox(height: 32),
+                // =========================
+                // BOTONES SOCIALES (arriba en crear cuenta)
+                // =========================
+                _buildSocialButtons(loading: loading),
 
-                // ========= BOTONES SOCIALES =========
-                _buildSocialButtons(),
+                const SizedBox(height: 22),
 
-                const SizedBox(height: 24),
-
-                // ========= SEPARADOR =========
+                // =========================
+                // SEPARADOR
+                // =========================
                 Row(
                   children: [
-                    const Expanded(child: Divider()),
-                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Divider(color: cs.onSurfaceVariant.withOpacity(0.35)),
+                    ),
+                    const SizedBox(width: 10),
                     Text(
-                      'o usa tu correo',
+                      isLogin ? 'o usa tu correo' : 'o crea tu cuenta con correo',
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: cs.onSurfaceVariant,
                       ),
                     ),
-                    const SizedBox(width: 8),
-                    const Expanded(child: Divider()),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Divider(color: cs.onSurfaceVariant.withOpacity(0.35)),
+                    ),
                   ],
                 ),
 
-                const SizedBox(height: 24),
+                const SizedBox(height: 22),
 
-                // ========= EMAIL + PASSWORD =========
+                // =========================
+                // CAMPOS
+                // =========================
                 TextField(
                   controller: emailC,
                   keyboardType: TextInputType.emailAddress,
                   enabled: !loading,
                   decoration: const InputDecoration(
-                    labelText: 'Email',
+                    labelText: 'Correo electrónico',
                   ),
                 ),
                 const SizedBox(height: 16),
@@ -356,6 +369,17 @@ class _AuthScreenState extends State<AuthScreen> {
                     labelText: 'Contraseña',
                   ),
                 ),
+
+                if (isLogin) ...[
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton(
+                      onPressed: loading ? null : _sendPasswordReset,
+                      child: const Text('Olvide mi contrasena'),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                ],
 
                 const SizedBox(height: 16),
 
@@ -370,6 +394,9 @@ class _AuthScreenState extends State<AuthScreen> {
 
                 const SizedBox(height: 16),
 
+                // =========================
+                // CTA
+                // =========================
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(
@@ -384,9 +411,11 @@ class _AuthScreenState extends State<AuthScreen> {
                   ),
                 ),
 
-                const SizedBox(height: 20),
+                const SizedBox(height: 18),
 
-                // ========= TOGGLE LOGIN / REGISTRO =========
+                // =========================
+                // TOGGLE
+                // =========================
                 TextButton(
                   onPressed: loading
                       ? null
@@ -397,13 +426,14 @@ class _AuthScreenState extends State<AuthScreen> {
                           });
                         },
                   child: Text(
-                    isLogin ? '¿No tienes cuenta? Crear cuenta' : '¿Ya tienes cuenta? Iniciar sesión',
+                    isLogin
+                        ? '¿No tienes cuenta? Crear cuenta'
+                        : '¿Ya tienes cuenta? Iniciar sesión',
                   ),
                 ),
 
                 const SizedBox(height: 8),
 
-                // ========= TEXTO DE CONFIANZA =========
                 Text(
                   'Lissen nunca comparte tus datos de acceso con otras personas.',
                   textAlign: TextAlign.center,
@@ -420,43 +450,54 @@ class _AuthScreenState extends State<AuthScreen> {
     );
   }
 
-  // ============================================================
-  // 🔵 BOTONES SOCIALES (UI) – ahora dependen del tema (sin colores fijos)
-  // ============================================================
-  Widget _buildSocialButtons() {
+  Widget _buildSocialButtons({required bool loading}) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        OutlinedButton(
-          onPressed: loading ? null : _handleFacebookBtn,
-          style: OutlinedButton.styleFrom(
-            minimumSize: const Size.fromHeight(48),
-            shape: const StadiumBorder(),
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: const [
-              Icon(Icons.facebook),
-              SizedBox(width: 12),
-              Text('Continuar con Facebook'),
-            ],
-          ),
-        ),
-
-        const SizedBox(height: 12),
-
+        // GOOGLE (blanco, borde, logo estilo oficial)
         OutlinedButton(
           onPressed: loading ? null : _handleGoogleBtn,
           style: OutlinedButton.styleFrom(
-            minimumSize: const Size.fromHeight(48),
+            minimumSize: const Size.fromHeight(52),
             shape: const StadiumBorder(),
+            backgroundColor: Colors.white,
+            side: const BorderSide(color: Color(0xFFE0E0E0)),
+            foregroundColor: Colors.black87,
           ),
           child: const Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               _GoogleLogoG(),
               SizedBox(width: 12),
-              Text('Continuar con Google'),
+              Text(
+                'Continuar con Google',
+                style: TextStyle(fontWeight: FontWeight.w700),
+              ),
+            ],
+          ),
+        ),
+
+        const SizedBox(height: 12),
+
+        // FACEBOOK (azul oficial)
+        ElevatedButton(
+          onPressed: loading ? null : _handleFacebookBtn,
+          style: ElevatedButton.styleFrom(
+            minimumSize: const Size.fromHeight(52),
+            shape: const StadiumBorder(),
+            backgroundColor: const Color(0xFF1877F2),
+            foregroundColor: Colors.white,
+            elevation: 0,
+          ),
+          child: const Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.facebook_rounded),
+              SizedBox(width: 12),
+              Text(
+                'Continuar con Facebook',
+                style: TextStyle(fontWeight: FontWeight.w700),
+              ),
             ],
           ),
         ),
@@ -465,9 +506,6 @@ class _AuthScreenState extends State<AuthScreen> {
   }
 }
 
-// ============================================================
-// 🔵 Widget privado para la "G" multicolor de Google (sin PNG)
-// ============================================================
 class _GoogleLogoG extends StatelessWidget {
   const _GoogleLogoG();
 
@@ -489,7 +527,7 @@ class _GoogleLogoG extends StatelessWidget {
               Color(0xFF34A853), // verde
               Color(0xFFFBBC05), // amarillo
               Color(0xFFEA4335), // rojo
-              Color(0xFF4285F4), // cerrar el círculo
+              Color(0xFF4285F4),
             ],
           ).createShader(bounds);
         },
@@ -497,8 +535,8 @@ class _GoogleLogoG extends StatelessWidget {
           'G',
           style: TextStyle(
             fontSize: 18,
-            fontWeight: FontWeight.w800,
-            color: Colors.white, // se usa como máscara
+            fontWeight: FontWeight.w900,
+            color: Colors.white,
           ),
         ),
       ),

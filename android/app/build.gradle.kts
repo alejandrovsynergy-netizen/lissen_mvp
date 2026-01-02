@@ -19,26 +19,31 @@ android {
     }
 
     kotlinOptions {
+        // Warning deprecado, pero NO rompe build. Lo puedes migrar después.
         jvmTarget = JavaVersion.VERSION_17.toString()
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
+        // TODO: Cambia esto a tu applicationId definitivo cuando decidas el nombre final.
         applicationId = "com.example.lissen_mvp"
-        // You can update the following values to match your application needs.
-        // For more information, see: https://flutter.dev/to/review-gradle-config.
+
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+
         multiDexEnabled = true
     }
 
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
+            // TEMPORAL para pruebas por WhatsApp:
+            // Firma con la debug key para que puedas generar release sin crear keystore todavía.
             signingConfig = signingConfigs.getByName("debug")
+
+            // Evita que R8/minify rompa el build (tu error actual viene de minifyReleaseWithR8)
+            isMinifyEnabled = false
+            isShrinkResources = false
         }
     }
 }

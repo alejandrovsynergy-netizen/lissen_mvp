@@ -102,6 +102,33 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     _preferredGender = d['preferredGender'] as String? ?? 'todos';
   }
 
+  Future<bool> _isAliasTaken(String alias) async {
+    final normalized = alias.trim().toLowerCase();
+    if (normalized.isEmpty) return false;
+
+    final byLower = await FirebaseFirestore.instance
+        .collection('users')
+        .where('aliasLower', isEqualTo: normalized)
+        .limit(1)
+        .get();
+    if (byLower.docs.isNotEmpty) {
+      final docId = byLower.docs.first.id;
+      return docId != widget.uid;
+    }
+
+    final byExact = await FirebaseFirestore.instance
+        .collection('users')
+        .where('alias', isEqualTo: alias.trim())
+        .limit(1)
+        .get();
+    if (byExact.docs.isNotEmpty) {
+      final docId = byExact.docs.first.id;
+      return docId != widget.uid;
+    }
+
+    return false;
+  }
+
   @override
   void dispose() {
     _aliasC.dispose();
@@ -131,6 +158,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       if (alias.length < 3) {
         throw 'El alias debe tener al menos 3 caracteres.';
       }
+      if (await _isAliasTaken(alias)) {
+        throw 'El alias ya esta en uso.';
+      }
       if (_role == null) {
         throw 'Debes elegir tu rol.';
       }
@@ -149,6 +179,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
       await FirebaseFirestore.instance.collection('users').doc(widget.uid).set({
         'alias': alias,
+        'aliasLower': alias.toLowerCase(),
         'age': age,
         'country': country,
         'city': city,

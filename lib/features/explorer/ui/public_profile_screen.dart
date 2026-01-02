@@ -66,21 +66,78 @@ class PublicProfileScreen extends StatelessWidget {
             }
 
             final data = doc.data() ?? <String, dynamic>{};
+            final currentUser = FirebaseAuth.instance.currentUser;
+            final blockedByCompanion = currentUser != null &&
+                (data['blockedUsers'] as List<dynamic>?)
+                        ?.map((e) => e.toString())
+                        .contains(currentUser.uid) ==
+                    true;
 
-            return SingleChildScrollView(
-              padding: const EdgeInsets.all(16.0),
-              child: PublicProfileBody(
-                userId: doc.id,
-                data: data,
-                showCloseButton: true,
-                onClose: () => Navigator.of(context).pop(),
-                onMakeOffer: enableMakeOfferButton && onMakeOffer != null
-                    ? () => onMakeOffer!(companionUid, data)
-                    : null,
-              ),
+            if (currentUser == null) {
+              return SingleChildScrollView(
+                padding: const EdgeInsets.all(16.0),
+                child: PublicProfileBody(
+                  userId: doc.id,
+                  data: data,
+                  showCloseButton: true,
+                  onClose: () => Navigator.of(context).pop(),
+                  onMakeOffer: enableMakeOfferButton && onMakeOffer != null
+                      ? () => onMakeOffer!(companionUid, data)
+                      : null,
+                ),
+              );
+            }
+
+            return FutureBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+              future: FirebaseFirestore.instance
+                  .collection('users')
+                  .doc(currentUser.uid)
+                  .get(),
+              builder: (context, meSnap) {
+                if (!meSnap.hasData) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+
+                final meData = meSnap.data?.data() ?? <String, dynamic>{};
+                final blockedByMe = (meData['blockedUsers'] as List<dynamic>?)
+                        ?.map((e) => e.toString())
+                        .contains(companionUid) ==
+                    true;
+
+                if (blockedByCompanion || blockedByMe) {
+                  return const _BlockedProfileView();
+                }
+
+                return SingleChildScrollView(
+                  padding: const EdgeInsets.all(16.0),
+                  child: PublicProfileBody(
+                    userId: doc.id,
+                    data: data,
+                    showCloseButton: true,
+                    onClose: () => Navigator.of(context).pop(),
+                    onMakeOffer: enableMakeOfferButton && onMakeOffer != null
+                        ? () => onMakeOffer!(companionUid, data)
+                        : null,
+                  ),
+                );
+              },
             );
           },
         ),
+      ),
+    );
+  }
+}
+
+class _BlockedProfileView extends StatelessWidget {
+  const _BlockedProfileView();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Center(
+      child: Text(
+        'Este perfil no esta disponible.',
+        textAlign: TextAlign.center,
       ),
     );
   }

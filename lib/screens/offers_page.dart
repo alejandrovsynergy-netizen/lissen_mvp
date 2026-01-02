@@ -1,8 +1,11 @@
+import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:just_audio/just_audio.dart';
 
 import 'waiting_for_speaker_screen.dart';
 import 'create_offer_dialog.dart';
@@ -28,6 +31,17 @@ class _OffersPageState extends State<OffersPage> {
   bool _busy = false;
   String? _processingOfferId;
 
+  static const Duration _exploreAlertDuration = Duration(minutes: 2);
+
+  late final AudioPlayer _exploreAlertPlayer;
+  bool _exploreAudioReady = false;
+  bool _exploreAudioInitialized = false;
+  bool _exploreAlertPlayerDisposed = false;
+  Timer? _exploreAlertTimer;
+  Timer? _exploreAlertStopTimer;
+  String? _exploreAlertOfferId;
+  DateTime? _exploreAlertUntil;
+
   // ✅ bandera para evitar loop de autopublicación
   bool _autoPublishingPaymentOffers = false;
 
@@ -49,6 +63,8 @@ class _OffersPageState extends State<OffersPage> {
   void initState() {
     super.initState();
 
+    _exploreAlertPlayer = AudioPlayer();
+
     _user = FirebaseAuth.instance.currentUser;
 
     if (_user != null) {
@@ -58,6 +74,17 @@ class _OffersPageState extends State<OffersPage> {
 
     // Este stream ya no se recrea en cada build
     _offersStream = FirebaseFirestore.instance.collection('offers').snapshots();
+  }
+
+  @override
+  void dispose() {
+    _exploreAlertPlayerDisposed = true;
+    _exploreAlertTimer?.cancel();
+    _exploreAlertStopTimer?.cancel();
+    try {
+      _exploreAlertPlayer.dispose();
+    } catch (_) {}
+    super.dispose();
   }
 
   Future<void> _openMoneyActivity(String uid) async {
@@ -117,6 +144,166 @@ class _OffersPageState extends State<OffersPage> {
     return distanceKm(userLat, userLng, offerLat, offerLng);
   }
 
+  DateTime? _createdAtFromData(Map<String, dynamic> data) {
+    final ts = data['createdAt'];
+    if (ts is Timestamp) return ts.toDate();
+    return null;
+  }
+
+  Future<void> _loadExploreAlertSound() async {
+    if (_exploreAlertPlayerDisposed || _exploreAudioInitialized) return;
+    try {
+      await _exploreAlertPlayer.setAsset('assets/sounds/offer_request.wav');
+      if (_exploreAlertPlayerDisposed) return;
+      _exploreAudioReady = true;
+      _exploreAudioInitialized = true;
+    } catch (_) {
+      _exploreAudioReady = false;
+      _exploreAudioInitialized = false;
+    }
+  }
+
+  Future<void> _playExploreAlertOnce() async {
+    if (!_exploreAudioReady || _exploreAlertPlayerDisposed) return;
+    try {
+      await _exploreAlertPlayer.stop();
+      await _exploreAlertPlayer.seek(Duration.zero);
+      await _exploreAlertPlayer.play();
+      HapticFeedback.vibrate();
+      await Future.delayed(const Duration(milliseconds: 120));
+      HapticFeedback.vibrate();
+    } catch (_) {}
+  }
+
+  Future<void> _startExploreAlert({
+    required String offerId,
+    required Duration remaining,
+  }) async {
+    if (_exploreAlertPlayerDisposed) return;
+
+    _exploreAlertOfferId = offerId;
+    _exploreAlertUntil = DateTime.now().add(remaining);
+
+    _exploreAlertStopTimer?.cancel();
+    _exploreAlertTimer?.cancel();
+
+    if (!_exploreAudioInitialized) {
+      await _loadExploreAlertSound();
+    }
+    if (!_exploreAudioReady || _exploreAlertPlayerDisposed) return;
+
+    await _playExploreAlertOnce();
+
+    _exploreAlertTimer =
+        Timer.periodic(const Duration(seconds: 2), (_) async {
+      if (_exploreAlertPlayerDisposed) return;
+      final until = _exploreAlertUntil;
+      if (until != null && DateTime.now().isAfter(until)) {
+        _stopExploreAlert();
+        return;
+      }
+      await _playExploreAlertOnce();
+    });
+
+    _exploreAlertStopTimer = Timer(remaining, _stopExploreAlert);
+  }
+
+  Future<void> _stopExploreAlert() async {
+    if (_exploreAlertPlayerDisposed) return;
+    _exploreAlertTimer?.cancel();
+    _exploreAlertStopTimer?.cancel();
+    _exploreAlertTimer = null;
+    _exploreAlertStopTimer = null;
+    _exploreAlertOfferId = null;
+    _exploreAlertUntil = null;
+    try {
+      await _exploreAlertPlayer.stop();
+    } catch (_) {}
+  }
+
+  bool _isExploreAlertEligible(
+    Map<String, dynamic> data,
+    String currentUserId,
+  ) {
+    final createdFrom = (data['createdFrom'] ?? '').toString();
+    if (createdFrom != 'explore') return false;
+    final status = (data['status'] ?? 'active').toString();
+    if (status != 'active') return false;
+    final targetCompanionId =
+        (data['targetCompanionId'] ?? '').toString().trim();
+    if (targetCompanionId.isEmpty) return false;
+    if (targetCompanionId != currentUserId) return false;
+    return true;
+  }
+
+  void _maybeHandleExploreAlert({
+    required String currentUserId,
+    required List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
+  }) {
+    if (_exploreAlertPlayerDisposed) return;
+
+    if (_exploreAlertOfferId != null) {
+      QueryDocumentSnapshot<Map<String, dynamic>>? currentDoc;
+      for (final doc in docs) {
+        if (doc.id == _exploreAlertOfferId) {
+          currentDoc = doc;
+          break;
+        }
+      }
+
+      if (currentDoc == null) {
+        _stopExploreAlert();
+        return;
+      }
+
+      final data = currentDoc.data();
+      if (!_isExploreAlertEligible(data, currentUserId)) {
+        _stopExploreAlert();
+        return;
+      }
+
+      final createdAt = _createdAtFromData(data);
+      if (createdAt == null) {
+        _stopExploreAlert();
+        return;
+      }
+
+      final remaining =
+          _exploreAlertDuration - DateTime.now().difference(createdAt);
+      if (remaining <= Duration.zero) {
+        _stopExploreAlert();
+      }
+      return;
+    }
+
+    QueryDocumentSnapshot<Map<String, dynamic>>? targetDoc;
+    DateTime? targetCreatedAt;
+
+    for (final doc in docs) {
+      final data = doc.data();
+      if (!_isExploreAlertEligible(data, currentUserId)) continue;
+      final createdAt = _createdAtFromData(data);
+      if (createdAt == null) continue;
+
+      final remaining =
+          _exploreAlertDuration - DateTime.now().difference(createdAt);
+      if (remaining <= Duration.zero) continue;
+
+      if (targetDoc == null || createdAt.isAfter(targetCreatedAt!)) {
+        targetDoc = doc;
+        targetCreatedAt = createdAt;
+      }
+    }
+
+    if (targetDoc == null || targetCreatedAt == null) return;
+
+    final remaining =
+        _exploreAlertDuration - DateTime.now().difference(targetCreatedAt);
+    if (remaining <= Duration.zero) return;
+
+    _startExploreAlert(offerId: targetDoc.id, remaining: remaining);
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -170,6 +357,11 @@ class _OffersPageState extends State<OffersPage> {
         final companionCodeUser =
             (userData['companionCode'] ?? '').toString().trim();
 
+        final blockedByMe = (userData['blockedUsers'] as List<dynamic>?)
+            ?.map((e) => e.toString())
+            .toSet() ??
+            <String>{};
+
         // género y geolocalización de la compañera
         final userGender = (userData['gender'] as String?)?.toLowerCase() ?? '';
         final double? userLat = (userData['geoLat'] as num?)?.toDouble();
@@ -178,12 +370,41 @@ class _OffersPageState extends State<OffersPage> {
         final isSpeaker = role == 'speaker';
         final currentUserId = user.uid;
 
+        bool _isTrue(dynamic v) {
+          if (v == true) return true;
+          if (v is num) return v != 0;
+          if (v is String) {
+            final s = v.toLowerCase().trim();
+            return s == 'true' || s == '1' || s == 'yes';
+          }
+          return false;
+        }
+
         // ✅ Variables de método de pago (para panel + autopublish)
         final defaultPmBrand =
             (userData['stripeDefaultPmBrand'] as String?)?.trim() ?? '';
         final defaultPmLast4 =
             (userData['stripeDefaultPmLast4'] as String?)?.trim() ?? '';
         final hasSavedCard = defaultPmLast4.isNotEmpty;
+        final bool companionStripeOk = (() {
+          final roleOk = role == 'companion';
+          if (!roleOk) return true;
+          final connectId =
+              (userData['stripeConnectAccountId'] ??
+                      userData['stripeAccountId'] ??
+                      '')
+                  .toString()
+                  .trim();
+          final payoutsEnabled = _isTrue(
+            userData['stripeConnectPayoutsEnabled'] ??
+                userData['stripePayoutsEnabled'],
+          );
+          final detailsSubmitted = _isTrue(
+            userData['stripeConnectDetailsSubmitted'] ??
+                userData['stripeDetailsSubmitted'],
+          );
+          return connectId.isNotEmpty && payoutsEnabled && detailsSubmitted;
+        })();
 
         return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
           stream: _offersStream, // ✅ stream estable
@@ -214,6 +435,8 @@ class _OffersPageState extends State<OffersPage> {
                 final status = (data['status'] ?? 'active').toString();
                 final speakerId = (data['speakerId'] ?? '').toString();
 
+                if (blockedByMe.contains(speakerId)) return false;
+
                 if (speakerId != currentUserId) return false;
                 return status == 'active' ||
                     status == 'pending_speaker' ||
@@ -230,6 +453,10 @@ class _OffersPageState extends State<OffersPage> {
                 final data = doc.data();
                 final status = (data['status'] ?? 'active').toString();
                 final speakerId = (data['speakerId'] ?? '').toString();
+
+                if (blockedByMe.contains(speakerId)) {
+                  continue;
+                }
                 final offerCompanionCode =
                     (data['companionCode'] ?? '').toString().trim();
 
@@ -248,6 +475,13 @@ class _OffersPageState extends State<OffersPage> {
                 }
 
                 // Filtro de género objetivo
+                final targetCompanionId =
+                    (data['targetCompanionId'] ?? '').toString().trim();
+                if (targetCompanionId.isNotEmpty &&
+                    targetCompanionId != currentUserId) {
+                  continue;
+                }
+
                 final targetGender =
                     (data['targetGender'] ?? 'todos').toString().toLowerCase();
                 bool genderOk = true;
@@ -326,6 +560,18 @@ class _OffersPageState extends State<OffersPage> {
                 // 4) Último desempate estable
                 return a.id.compareTo(b.id);
               });
+            }
+
+            if (!isSpeaker) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (!mounted) return;
+                _maybeHandleExploreAlert(
+                  currentUserId: currentUserId,
+                  docs: docs,
+                );
+              });
+            } else {
+              _stopExploreAlert();
             }
 
             // ✅ Autopublicar si ya hay tarjeta guardada
@@ -455,7 +701,8 @@ class _OffersPageState extends State<OffersPage> {
                               ),
                             ),
                             const SliverToBoxAdapter(
-                                child: SizedBox(height: 12)),
+                              child: SizedBox(height: 12),
+                            ),
                           ],
 
                           if (docs.isEmpty)
@@ -514,8 +761,21 @@ class _OffersPageState extends State<OffersPage> {
                                           currentUserAlias: alias,
                                           isProcessing: _busy &&
                                               _processingOfferId == doc.id,
-                                          onTakeOffer:
-                                              _handleCompanionTakeOffer,
+                                          blockedUserIds: blockedByMe,
+                                          onTakeOffer: ({
+                                            required offerId,
+                                            required offerData,
+                                            required currentUserId,
+                                            required currentUserAlias,
+                                          }) =>
+                                              _handleCompanionTakeOffer(
+                                                offerId: offerId,
+                                                offerData: offerData,
+                                                currentUserId: currentUserId,
+                                                currentUserAlias:
+                                                    currentUserAlias,
+                                                companionStripeOk: true,
+                                              ),
                                           onEdit: (offerId, offerData) {
                                             _handleEditOffer(
                                               offerId: offerId,
@@ -528,6 +788,7 @@ class _OffersPageState extends State<OffersPage> {
                                           },
                                           onDelete: (offerId) =>
                                               _handleDeleteOffer(offerId),
+                                          onRejectWithCode: null,
                                           onSpeakerPendingDecision:
                                               isPendingForSpeaker
                                                   ? (offerId, offerData) =>
@@ -657,19 +918,6 @@ class _OffersPageState extends State<OffersPage> {
                               ),
                             )
                           else ...[
-                            SliverToBoxAdapter(
-                              child: Padding(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 16),
-                                child: _InfoNote(
-                                  text:
-                                      'Importante: No se te cobrará nada si no hay conversación.\n'
-                                      'Si alguien toma tu oferta, recibirás una notificación para aceptar o rechazar antes de empezar.',
-                                ),
-                              ),
-                            ),
-                            const SliverToBoxAdapter(
-                                child: SizedBox(height: 12)),
                             SliverPadding(
                               padding:
                                   const EdgeInsets.symmetric(horizontal: 16),
@@ -697,10 +945,35 @@ class _OffersPageState extends State<OffersPage> {
                                           currentUserAlias: alias,
                                           isProcessing: _busy &&
                                               _processingOfferId == doc.id,
+                                          blockedUserIds: blockedByMe,
+                                          allowTake: companionStripeOk,
+                                          takeBlockedMessage: companionStripeOk
+                                              ? null
+                                              : 'Conecta tu cuenta de Stripe para poder tomar ofertas.',
                                           onTakeOffer:
-                                              _handleCompanionTakeOffer,
+                                              ({
+                                                required offerId,
+                                                required offerData,
+                                                required currentUserId,
+                                                required currentUserAlias,
+                                              }) =>
+                                                  _handleCompanionTakeOffer(
+                                                    offerId: offerId,
+                                                    offerData: offerData,
+                                                    currentUserId:
+                                                        currentUserId,
+                                                    currentUserAlias:
+                                                        currentUserAlias,
+                                                    companionStripeOk:
+                                                        companionStripeOk,
+                                                  ),
                                           onEdit: null,
                                           onDelete: null,
+                                          onRejectWithCode: (offerId, offerData) =>
+                                              _handleCompanionRejectWithCode(
+                                                offerId: offerId,
+                                                offerData: offerData,
+                                              ),
                                           onSpeakerPendingDecision: null,
                                         ),
                                       ),
@@ -727,8 +1000,22 @@ class _OffersPageState extends State<OffersPage> {
     required Map<String, dynamic> offerData,
     required String currentUserId,
     required String currentUserAlias,
+    required bool companionStripeOk,
   }) async {
     if (_busy) return;
+
+    if (!companionStripeOk) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Conecta tu cuenta de Stripe para poder tomar ofertas.',
+            ),
+          ),
+        );
+      }
+      return;
+    }
 
     setState(() {
       _busy = true;
@@ -769,6 +1056,55 @@ class _OffersPageState extends State<OffersPage> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error al tomar oferta: $e')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _processingOfferId = null;
+        });
+      }
+    }
+  }
+
+  Future<void> _handleCompanionRejectWithCode({
+    required String offerId,
+    required Map<String, dynamic> offerData,
+  }) async {
+    if (_busy) return;
+
+    setState(() {
+      _busy = true;
+      _processingOfferId = offerId;
+    });
+
+    try {
+      final res = await FirebaseFirestore.instance
+          .runTransaction<String?>((tx) async {
+        final ref =
+            FirebaseFirestore.instance.collection('offers').doc(offerId);
+        final snap = await tx.get(ref);
+        if (!snap.exists) return 'not_exists';
+
+        final data = snap.data() as Map<String, dynamic>;
+        final status = (data['status'] ?? 'active').toString();
+        final code = (data['companionCode'] ?? '').toString().trim();
+        final pendingCompanionId =
+            (data['pendingCompanionId'] ?? '').toString().trim();
+
+        if (status == 'active' && code.isNotEmpty && pendingCompanionId.isEmpty) {
+          tx.delete(ref);
+          return 'deleted';
+        }
+        return 'no_action';
+      });
+
+      if (!mounted) return;
+
+      if (res == 'deleted') {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Oferta rechazada.')),
         );
       }
     } finally {
